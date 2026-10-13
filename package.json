@@ -1,0 +1,24 @@
+{
+  "name": "mangareader",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/server"
+  ],
+  "engines": {
+    "node": ">=22.16.0"
+  },
+  "scripts": {
+    "dev": "npm run dev -w @mangareader/server",
+    "build": "npm run build -w @mangareader/server",
+    "test": "npm run test -w @mangareader/server",
+    "typecheck": "npm run typecheck -w @mangareader/server",
+    "db:migrate": "npm run db:migrate -w @mangareader/server",
+    "contract:generate": "node --import tsx scripts/generate-api-contract.ts",
+    "format": "prettier --write apps/server/src apps/server/test scripts/generate-api-contract.ts",
+    "format:check": "prettier --check apps/server/src apps/server/test scripts/generate-api-contract.ts"
+  },
+  "devDependencies": {
+    "prettier": "3.6.2"
+  }
+}

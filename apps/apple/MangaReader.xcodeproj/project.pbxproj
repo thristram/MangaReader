@@ -1,0 +1,448 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		08295E8C2EF2DB0A14E795C9 /* Shared/LocalMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C25324C8E4FB93D5B344408 /* Shared/LocalMedia.swift */; };
+		085B42DE8F05A1A233674586 /* MangaCore in Frameworks */ = {isa = PBXBuildFile; productRef = D6DA7D65DD6D6F2A07AAAA04 /* MangaCore */; };
+		20C6A619565FA4A7A61C0208 /* Shared/AppSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3F4E539C47BF0F4F306B2E2 /* Shared/AppSession.swift */; };
+		235F9F4A53A80EED318F67DB /* Shared/Configuration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C5822ED106F7D98DE53020 /* Shared/Configuration.swift */; };
+		2389E62887ECEF1186C9D760 /* Shared/Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9AD141841DDB42E5BFC7183 /* Shared/Keychain.swift */; };
+		337A25D27AB540A595697C10 /* iPhone/LibraryController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D1591712188616E422BCCAC /* iPhone/LibraryController.swift */; };
+		41A78AAFF56C72056E03B8C3 /* Shared/Configuration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61C5822ED106F7D98DE53020 /* Shared/Configuration.swift */; };
+		4960646ADBE7414251306764 /* AMSMB2 in Frameworks */ = {isa = PBXBuildFile; productRef = B60A18169D85C9FC710B8BB9 /* AMSMB2 */; };
+		4A27551BF8E4F26FDF61206D /* Shared/SMBMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E62CBE8319CE53B53C37C6C /* Shared/SMBMedia.swift */; };
+		52A8D4E938DCB042D88645CC /* iPhone/AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BC07428D5509757FD5949A5 /* iPhone/AppDelegate.swift */; };
+		5A2FC2039BD971C4A6F8E9AF /* AMSMB2 in Frameworks */ = {isa = PBXBuildFile; productRef = A4A0E864F82AC7CFFC2EF5BB /* AMSMB2 */; };
+		64680F977221C7D86AC6D324 /* iPhone/ReaderController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFD3EE87951D4DADDCD75A76 /* iPhone/ReaderController.swift */; };
+		6652CB4C1AC1317FDFDE706E /* iPhone/SettingsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 810B26D8730F150E7A96BDB4 /* iPhone/SettingsController.swift */; };
+		695A886460D2B383C5CFB463 /* Mac/EditController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4871B7E97C11CD61A8E8AAC /* Mac/EditController.swift */; };
+		86B873BECD776C8837E360B2 /* Mac/SettingsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D6B2EF152ABB125FC5980AB /* Mac/SettingsController.swift */; };
+		8912E09E57D3B7E8DE2D2791 /* Shared/Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9AD141841DDB42E5BFC7183 /* Shared/Keychain.swift */; };
+		9A7DBF2376222E20584E7C55 /* Shared/AppSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3F4E539C47BF0F4F306B2E2 /* Shared/AppSession.swift */; };
+		ACA391E05DD258F2373A3F24 /* Shared/LocalMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C25324C8E4FB93D5B344408 /* Shared/LocalMedia.swift */; };
+		BF72FF5A816AE6F6907DEE98 /* Mac/ImportController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97219F986C9ABFFC9351C471 /* Mac/ImportController.swift */; };
+		C9616552E52E66EDE8147A6E /* MangaCore in Frameworks */ = {isa = PBXBuildFile; productRef = 3035110937FD260523B4338C /* MangaCore */; };
+		D4CD6529648988F8912C155A /* Shared/SMBMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E62CBE8319CE53B53C37C6C /* Shared/SMBMedia.swift */; };
+		D92B59912FCF74E3EC1BD2FB /* Mac/AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD1D604FFFE2810050E6D569 /* Mac/AppDelegate.swift */; };
+		DC20F9E09E9165962842A575 /* Mac/LibraryController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B41FC8A5300E2FF28593FCD /* Mac/LibraryController.swift */; };
+		E9CB29DAC0A1E78A31AA0D9E /* Mac/ReaderController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16BBDE534187D60FD41C60E /* Mac/ReaderController.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1405DF66CBE219B0BF6355BC /* Config/Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Base.xcconfig; sourceTree = "<group>"; };
+		3B41FC8A5300E2FF28593FCD /* Mac/LibraryController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/LibraryController.swift; sourceTree = "<group>"; };
+		3C25324C8E4FB93D5B344408 /* Shared/LocalMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/LocalMedia.swift; sourceTree = "<group>"; };
+		3E62CBE8319CE53B53C37C6C /* Shared/SMBMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/SMBMedia.swift; sourceTree = "<group>"; };
+		4DB7D65CCD5814C24C222B85 /* MangaReaderiPhone.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = MangaReaderiPhone.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		560DA58610367D5893DB55C7 /* MangaReaderMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = MangaReaderMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5D1591712188616E422BCCAC /* iPhone/LibraryController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iPhone/LibraryController.swift; sourceTree = "<group>"; };
+		5D6B2EF152ABB125FC5980AB /* Mac/SettingsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/SettingsController.swift; sourceTree = "<group>"; };
+		61C5822ED106F7D98DE53020 /* Shared/Configuration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/Configuration.swift; sourceTree = "<group>"; };
+		6BC07428D5509757FD5949A5 /* iPhone/AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iPhone/AppDelegate.swift; sourceTree = "<group>"; };
+		810B26D8730F150E7A96BDB4 /* iPhone/SettingsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iPhone/SettingsController.swift; sourceTree = "<group>"; };
+		97219F986C9ABFFC9351C471 /* Mac/ImportController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/ImportController.swift; sourceTree = "<group>"; };
+		A16BBDE534187D60FD41C60E /* Mac/ReaderController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/ReaderController.swift; sourceTree = "<group>"; };
+		A9AD141841DDB42E5BFC7183 /* Shared/Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/Keychain.swift; sourceTree = "<group>"; };
+		B4871B7E97C11CD61A8E8AAC /* Mac/EditController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/EditController.swift; sourceTree = "<group>"; };
+		C3F4E539C47BF0F4F306B2E2 /* Shared/AppSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/AppSession.swift; sourceTree = "<group>"; };
+		DD1D604FFFE2810050E6D569 /* Mac/AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/AppDelegate.swift; sourceTree = "<group>"; };
+		DFD3EE87951D4DADDCD75A76 /* iPhone/ReaderController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iPhone/ReaderController.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		92DA557B818076F2F4885953 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C9616552E52E66EDE8147A6E /* MangaCore in Frameworks */,
+				4960646ADBE7414251306764 /* AMSMB2 in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D05955A8F3FBE2F564D53395 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				085B42DE8F05A1A233674586 /* MangaCore in Frameworks */,
+				5A2FC2039BD971C4A6F8E9AF /* AMSMB2 in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		615B463D1028E4E24B674CF7 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				560DA58610367D5893DB55C7 /* MangaReaderMac.app */,
+				4DB7D65CCD5814C24C222B85 /* MangaReaderiPhone.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		870B3294C0CBD48AF6BBCC1B = {
+			isa = PBXGroup;
+			children = (
+				DD1D604FFFE2810050E6D569 /* Mac/AppDelegate.swift */,
+				B4871B7E97C11CD61A8E8AAC /* Mac/EditController.swift */,
+				97219F986C9ABFFC9351C471 /* Mac/ImportController.swift */,
+				3B41FC8A5300E2FF28593FCD /* Mac/LibraryController.swift */,
+				A16BBDE534187D60FD41C60E /* Mac/ReaderController.swift */,
+				5D6B2EF152ABB125FC5980AB /* Mac/SettingsController.swift */,
+				C3F4E539C47BF0F4F306B2E2 /* Shared/AppSession.swift */,
+				61C5822ED106F7D98DE53020 /* Shared/Configuration.swift */,
+				A9AD141841DDB42E5BFC7183 /* Shared/Keychain.swift */,
+				3C25324C8E4FB93D5B344408 /* Shared/LocalMedia.swift */,
+				3E62CBE8319CE53B53C37C6C /* Shared/SMBMedia.swift */,
+				6BC07428D5509757FD5949A5 /* iPhone/AppDelegate.swift */,
+				5D1591712188616E422BCCAC /* iPhone/LibraryController.swift */,
+				DFD3EE87951D4DADDCD75A76 /* iPhone/ReaderController.swift */,
+				810B26D8730F150E7A96BDB4 /* iPhone/SettingsController.swift */,
+				1405DF66CBE219B0BF6355BC /* Config/Base.xcconfig */,
+				615B463D1028E4E24B674CF7 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A084306E6AA8719BB2CF3305 /* MangaReaderiPhone */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AB944596BAAC8039396FD540 /* Build configuration list for PBXNativeTarget "MangaReaderiPhone" */;
+			buildPhases = (
+				550AE692F8E3FD75C954291B /* Sources */,
+				92DA557B818076F2F4885953 /* Frameworks */,
+				B7A2EF6FBC2B5FD406E24820 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MangaReaderiPhone;
+			packageProductDependencies = (
+				3035110937FD260523B4338C /* MangaCore */,
+				B60A18169D85C9FC710B8BB9 /* AMSMB2 */,
+			);
+			productName = MangaReaderiPhone;
+			productReference = 4DB7D65CCD5814C24C222B85 /* MangaReaderiPhone.app */;
+			productType = "com.apple.product-type.application";
+		};
+		B8743CEBAE419BB35D1DDAB7 /* MangaReaderMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 100CA832169D1A0E3CFB9855 /* Build configuration list for PBXNativeTarget "MangaReaderMac" */;
+			buildPhases = (
+				F5717EB8D1C49DA8077FCC6B /* Sources */,
+				D05955A8F3FBE2F564D53395 /* Frameworks */,
+				1B0B2A22B00D3E73A1FF0F41 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MangaReaderMac;
+			packageProductDependencies = (
+				D6DA7D65DD6D6F2A07AAAA04 /* MangaCore */,
+				A4A0E864F82AC7CFFC2EF5BB /* AMSMB2 */,
+			);
+			productName = MangaReaderMac;
+			productReference = 560DA58610367D5893DB55C7 /* MangaReaderMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		98F54143AB4E86B28C3AFEE0 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 2700;
+			};
+			buildConfigurationList = 6650A2B5E24FA7522CE6B81C /* Build configuration list for PBXProject "MangaReader" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 870B3294C0CBD48AF6BBCC1B;
+			packageReferences = (
+				B747EAD6A8D7189EE159E1E4 /* XCLocalSwiftPackageReference "../../packages/MangaCore" */,
+				FF8ECD98D2B85C8464A7A2C7 /* XCRemoteSwiftPackageReference "AMSMB2" */,
+			);
+			productRefGroup = 615B463D1028E4E24B674CF7 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B8743CEBAE419BB35D1DDAB7 /* MangaReaderMac */,
+				A084306E6AA8719BB2CF3305 /* MangaReaderiPhone */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		1B0B2A22B00D3E73A1FF0F41 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B7A2EF6FBC2B5FD406E24820 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		550AE692F8E3FD75C954291B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9A7DBF2376222E20584E7C55 /* Shared/AppSession.swift in Sources */,
+				41A78AAFF56C72056E03B8C3 /* Shared/Configuration.swift in Sources */,
+				2389E62887ECEF1186C9D760 /* Shared/Keychain.swift in Sources */,
+				08295E8C2EF2DB0A14E795C9 /* Shared/LocalMedia.swift in Sources */,
+				4A27551BF8E4F26FDF61206D /* Shared/SMBMedia.swift in Sources */,
+				52A8D4E938DCB042D88645CC /* iPhone/AppDelegate.swift in Sources */,
+				337A25D27AB540A595697C10 /* iPhone/LibraryController.swift in Sources */,
+				64680F977221C7D86AC6D324 /* iPhone/ReaderController.swift in Sources */,
+				6652CB4C1AC1317FDFDE706E /* iPhone/SettingsController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F5717EB8D1C49DA8077FCC6B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D92B59912FCF74E3EC1BD2FB /* Mac/AppDelegate.swift in Sources */,
+				695A886460D2B383C5CFB463 /* Mac/EditController.swift in Sources */,
+				BF72FF5A816AE6F6907DEE98 /* Mac/ImportController.swift in Sources */,
+				DC20F9E09E9165962842A575 /* Mac/LibraryController.swift in Sources */,
+				E9CB29DAC0A1E78A31AA0D9E /* Mac/ReaderController.swift in Sources */,
+				86B873BECD776C8837E360B2 /* Mac/SettingsController.swift in Sources */,
+				20C6A619565FA4A7A61C0208 /* Shared/AppSession.swift in Sources */,
+				235F9F4A53A80EED318F67DB /* Shared/Configuration.swift in Sources */,
+				8912E09E57D3B7E8DE2D2791 /* Shared/Keychain.swift in Sources */,
+				ACA391E05DD258F2373A3F24 /* Shared/LocalMedia.swift in Sources */,
+				D4CD6529648988F8912C155A /* Shared/SMBMedia.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		04E7EA1EBC73C4DAC6FA2FC7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 1405DF66CBE219B0BF6355BC /* Config/Base.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/MangaReaderMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = WBZ6T2AKNS;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/Info-Mac.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				ONLY_ACTIVE_ARCH = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = com.thristram.mangareader.mac;
+				PRODUCT_NAME = MangaReaderMac;
+				SDKROOT = macosx;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		1543BD5998AEF7988C3978FC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 1405DF66CBE219B0BF6355BC /* Config/Base.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/MangaReaderMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = WBZ6T2AKNS;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/Info-Mac.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.thristram.mangareader.mac;
+				PRODUCT_NAME = MangaReaderMac;
+				SDKROOT = macosx;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		1D937D33247EFAA26C0AB450 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 1405DF66CBE219B0BF6355BC /* Config/Base.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = WBZ6T2AKNS;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/Info-iPhone.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				ONLY_ACTIVE_ARCH = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = com.thristram.mangareader.iphone;
+				PRODUCT_NAME = MangaReaderiPhone;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		3D553B551D2688E2E7A15153 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		AA60E62D3E7BAEF305ADABEA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		D09FF86959874343170E1BDA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 1405DF66CBE219B0BF6355BC /* Config/Base.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = WBZ6T2AKNS;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/Info-iPhone.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.thristram.mangareader.iphone;
+				PRODUCT_NAME = MangaReaderiPhone;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		100CA832169D1A0E3CFB9855 /* Build configuration list for PBXNativeTarget "MangaReaderMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1543BD5998AEF7988C3978FC /* Debug */,
+				04E7EA1EBC73C4DAC6FA2FC7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6650A2B5E24FA7522CE6B81C /* Build configuration list for PBXProject "MangaReader" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA60E62D3E7BAEF305ADABEA /* Debug */,
+				3D553B551D2688E2E7A15153 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		AB944596BAAC8039396FD540 /* Build configuration list for PBXNativeTarget "MangaReaderiPhone" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D09FF86959874343170E1BDA /* Debug */,
+				1D937D33247EFAA26C0AB450 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		B747EAD6A8D7189EE159E1E4 /* XCLocalSwiftPackageReference "../../packages/MangaCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../packages/MangaCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		FF8ECD98D2B85C8464A7A2C7 /* XCRemoteSwiftPackageReference "AMSMB2" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/amosavian/AMSMB2";
+			requirement = {
+				kind = exactVersion;
+				version = 4.0.3;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		3035110937FD260523B4338C /* MangaCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B747EAD6A8D7189EE159E1E4 /* XCLocalSwiftPackageReference "../../packages/MangaCore" */;
+			productName = MangaCore;
+		};
+		A4A0E864F82AC7CFFC2EF5BB /* AMSMB2 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FF8ECD98D2B85C8464A7A2C7 /* XCRemoteSwiftPackageReference "AMSMB2" */;
+			productName = AMSMB2;
+		};
+		B60A18169D85C9FC710B8BB9 /* AMSMB2 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FF8ECD98D2B85C8464A7A2C7 /* XCRemoteSwiftPackageReference "AMSMB2" */;
+			productName = AMSMB2;
+		};
+		D6DA7D65DD6D6F2A07AAAA04 /* MangaCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B747EAD6A8D7189EE159E1E4 /* XCLocalSwiftPackageReference "../../packages/MangaCore" */;
+			productName = MangaCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 98F54143AB4E86B28C3AFEE0 /* Project object */;
+}

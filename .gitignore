@@ -1,0 +1,36 @@
+# Local credentials and environment overrides, in any directory.
+.env*
+*.env
+*.env.*
+.envrc
+!.env.example
+!*.env.example
+
+# Apple local configuration and developer state.
+/apps/apple/Config/Local*.xcconfig
+/apps/apple/Config/Local.xcconfig.*
+!/apps/apple/Config/Local.xcconfig.example
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.swiftpm/
+*.xccheckout
+*.xcscmblueprint
+
+# Dependencies, build/test output and deployment-local secrets/state.
+node_modules/
+.build/
+/apps/server/dist/
+.vercel/
+.tools/
+coverage/
+*.log
+npm-debug.log*
+.DS_Store
+
+# Local private keys and signing material. Public certificates can be added explicitly.
+*.key
+*.pem
+*.p12
+*.pfx
+*.mobileprovision

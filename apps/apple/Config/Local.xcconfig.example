@@ -1,0 +1,10 @@
+// Copy to Local.xcconfig. These public app values are not secrets.
+// URL slashes use $() so xcconfig doesn't treat them as comments.
+MANGA_API_URL = https:/$()/manga.example.com
+AUTH_ISSUER = https:/$()/auth.example.com/api/auth
+MANGA_API_AUDIENCE = https:/$()/manga.example.com
+MAC_OAUTH_CLIENT_ID = replace-with-registered-mac-client-id
+IPHONE_OAUTH_CLIENT_ID = replace-with-registered-iphone-client-id
+// Fixed development callback schemes; register exact redirect URIs.
+// com.thristram.mangareader.mac:/oauth/callback
+// com.thristram.mangareader.iphone:/oauth/callback

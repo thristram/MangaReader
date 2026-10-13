@@ -1,0 +1,9 @@
+# Consistent source/config/documentation line endings across development machines.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.pdf binary
+*.mp4 binary
+*.webm binary
