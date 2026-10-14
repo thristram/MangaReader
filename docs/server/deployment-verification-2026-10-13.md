@@ -29,3 +29,12 @@ A regression test checks that only this entrypoint exists, that it exports a cal
 4. Verify production Mongo connectivity through an authenticated library request. Direct local credential-based Mongo connectivity does not prove Vercel has the same reachable/valid credential configuration.
 
 No production deployment, environment update, database migration, user metadata mutation or credential change was performed by this verification. Current production is still failing until the correction is deployed.
+
+
+## Follow-up — root migration flag forwarding
+
+The documented root command initially forwarded `--apply` to npm's workspace runner as an npm option rather than to the migration program. The root script now ends with its own `--` separator. The user's intended `npm run db:migrate -- --apply` reaches `src/migrate.ts --apply` correctly.
+
+The corrected command was applied to the configured `mangareader` database after the user explicitly attempted the apply command. It returned `Schema v1 applied.` A direct read-only follow-up confirmed the v1 marker and both unique `(ownerId,id)` indexes. Entity/state counts remain zero. No comic/user records were inserted or deleted; no credentials were printed or committed. Dry-run behavior was also checked with an intentionally invalid URI and returned without attempting a connection.
+
+This completes metadata-database initialization using the local configuration. It does not establish production-runtime DB connectivity or authenticated API CRUD; those still require the corrected deployment and a real account login.

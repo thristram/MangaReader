@@ -19,6 +19,8 @@ npm run db:migrate -- --apply      # applies idempotent v1 indexes after backup
 npm run dev
 ```
 
+The root wrapper forwards migration flags through npm’s second `--` separator, so `npm run db:migrate -- --apply` reaches the actual migration program. You can also call it directly with `npm run db:migrate -w @mangareader/server -- --apply`. Without `--apply`, it remains a dry run.
+
 The migration creates compound unique `(ownerId,id)` indexes for entities and states and an account/kind listing index. These indexes are mandatory for safe creation/CAS. Production library routes return 503 until the v1 migration marker is present. `MONGODB_DATABASE` separates this service from the auth database. No auth database migration is executed by this repository.
 
 `GET /health` is public liveness. Every `/v1` request needs a real Manga audience access token. Production has no fake tokens or memory repository. The test suite uses injected dependencies only.
