@@ -27,7 +27,7 @@ cp apps/server/.env.example apps/server/.env
 cp apps/apple/Config/Local.xcconfig.example apps/apple/Config/Local.xcconfig
 ```
 
-Fill in the MongoDB URI, canonical auth issuer, JWKS URL and permanent Manga API resource identifier. Register **two public PKCE clients** in thristram-auth; use the Mac and iPhone client IDs in the Apple config. No client secret belongs in an app. [Auth registration](docs/server/auth-integration.md) explains the required resource policy and exact callbacks. Example domains are placeholders; live sign-in cannot work until you replace them.
+Fill in the server's MongoDB URI, canonical auth issuer, JWKS URL and permanent Manga API resource identifier. Apple deployment URLs are already configured in `apps/apple/Config/Service.xcconfig`: API/resource `https://manga-api.thenoirclub.com`, issuer `https://auth.thenoirclub.com/api/auth`. Change this project file and rebuild to use another deployment; no endpoint editor appears in the app. The supplied public PKCE client ID is shared by both apps in `Base.xcconfig`; use `Local.xcconfig` only if overriding client IDs. No client secret belongs in an app. [Auth registration](docs/server/auth-integration.md) explains the resource policy, scopes and both required callbacks.
 
 ```sh
 npm run db:migrate                  # dry run
@@ -42,7 +42,7 @@ The local API can be exercised through `/health` and authenticated requests, but
 
 ## Usage
 
-1. Configure Connections and sign in using the hosted Thristram login in `ASWebAuthenticationSession`.
+1. Open the app's full-window welcome screen and click **Sign In** to open hosted Thristram login in `ASWebAuthenticationSession`. A verified account reveals the library; sign-out returns to the welcome screen.
 2. On Mac, open Import; drop folders anywhere in the sheet or select folders/PDF/MP4/WebM files. Review each chapter, author, optional comic, description, language, source IDs and tags.
 3. The default primary action, **Add to Library & Move Files**, explicitly commits that import. Pick the managed library root. This milestone moves a clean chapter folder/file within one volume; add-only leaves files in place. Mixed folders and unsupported moves are refused.
 4. Open a comic to see its chapter grid; open a chapter to read. Use the pencil to edit metadata. Set an Ollama host/model to translate title/description into the preferred manga language.

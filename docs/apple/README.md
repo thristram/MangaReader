@@ -5,16 +5,16 @@ The two app targets are native: `MangaReaderMac` uses AppKit, `MangaReaderiPhone
 ## Xcode setup
 
 1. Install Xcode with iOS/macOS 26+ SDKs (validated with Xcode 27.0 / Swift 6.4).
-2. Copy `apps/apple/Config/Local.xcconfig.example` to `Local.xcconfig`; enter HTTPS API, issuer, permanent resource and two public OAuth client IDs. The sample uses `$()` between URL slashes to avoid xcconfig comment parsing.
+2. Deployment URLs/resource live in `apps/apple/Config/Service.xcconfig`; the default API is `https://manga-api.thenoirclub.com` and issuer is `https://auth.thenoirclub.com/api/auth`. The supplied public client ID is already in `Base.xcconfig` for both targets. If using different registrations, copy `Local.xcconfig.example` to `Local.xcconfig` and replace both placeholder IDs. Do not leave sample placeholders in an included local file. `$()` between URL slashes avoids xcconfig comment parsing.
 3. Open `apps/apple/MangaReader.xcodeproj`. Shared schemes are checked in. Swift Package Manager resolves MangaCore locally and dynamic AMSMB2 **4.0.3** remotely; resolved versions are checked in.
 4. Select Mac or iPhone scheme and destination. Set your Development Team for signed/device builds. Mac sandbox entitlements permit selected read/write files, persistent bookmarks and network client access. iPhone requests local-network access for NAS connections.
 5. Register the matching exact callback in thristram-auth; [auth guide](../server/auth-integration.md).
 
-No `.env` is read by an Apple application. `Local.xcconfig` contains public values, not secrets; tokens/NAS passwords use Keychain. Connections settings can override public values at runtime; changing account connection settings signs out.
+No `.env` is read by an Apple application. `Service.xcconfig` and client IDs are public build configuration; tokens/NAS passwords use Keychain. The deployment file is included after local configuration, so stale local URL values cannot override it. API/issuer/resource/client values are read from the built bundle, never from old UserDefaults entries. Rebuild after changing them; existing saved credentials are restored only when issuer/client/resource still match. Connections settings now configure storage only.
 
 ## Mac usage
 
-- Sign in through the toolbar account icon. The unified toolbar stays in one row; library navigation is in the sidebar.
+- While signed out, the entire window shows MangaReader identity and **Sign In**, with no library/sidebar/toolbar. Sign In opens the hosted ASWeb login, not a native credential form. Restore/sign-in shows progress and prevents duplicate requests; cancellation leaves a retryable welcome screen. After identity verification, the unified toolbar and library sidebar appear; the account toolbar icon signs out and returns to the welcome screen, closing old readers/sheets.
 - Import opens a native sheet. Drop folders anywhere on it or choose files. Candidates use natural filename sort. Review a prominent cover preview and fill chapter, author, comic, description, tags and source IDs.
 - Author/comic fields search existing entries; New Author opens a popup; Create Comic can select/create a series. Tags support existing-name completion and Add/Create. Full removable token-chip editing and alignment popup remain pending.
 - Default primary action explicitly adds metadata and moves the clean chapter folder/file into a chosen managed root. Initial mover only supports one-volume atomic moves and refuses mixed folders/overwrite. Add without moving creates metadata only.
@@ -25,6 +25,7 @@ No `.env` is read by an Apple application. `Local.xcconfig` contains public valu
 ## iPhone usage
 
 - UIKit large-title navigation and search, system back gestures, floating tab bar and continue-reading accessory follow Apple Music's structure. Tabs: Library, Continue Reading, Downloads.
+- Until identity verification completes, a full-screen UIKit welcome page shows **Sign In** and no navigation bar/tab bar. Successful sign-in reveals the native tabs; sign-out removes them and returns to welcome.
 - More menu exposes Authors/Series/Tags/Favorites/Starred/History and Settings. No edit/import/rename/move/reorg/commit/Ollama administration controls.
 - Sign in with the registered iPhone public client. Mac-imported metadata appears through automatic snapshot sync.
 - In Settings → SMB Storage Roots, connect an existing library root with `smb://host`, share, optional base folder and NAS credentials. These remain account/root-specific in Keychain. The adapter requires SMB3 encryption.
@@ -54,6 +55,8 @@ swift scripts/verify-mac-window.swift
 
 This opens a separate app instance, checks for an onscreen window of at least the app's minimum size, and closes only that instance. Existing Xcode/user instances remain untouched. A successful build or a running process alone does not establish that the UI appeared. This check does not initiate interactive sign-in or change configuration; any saved session follows the app's normal startup restoration behavior. It does not verify reading/NAS/sync behavior. Library/sidebar headings use the window safe area to stay below the unified toolbar; the initial content size is 1200 × 800. See Apple's [NSApplication startup documentation](https://developer.apple.com/documentation/appkit/nsapplication) and [default delegate entrypoint](https://developer.apple.com/documentation/appkit/nsapplicationdelegate/main()).
 
-After source file additions/removals, run `python3 scripts/generate-xcode-project.py`. It regenerates shared schemes/project/plists but leaves `Local.xcconfig` untouched. App source currently uses Swift 5 language mode for Apple framework compatibility; shared core uses Swift 6 with Sendable models. The compiler is Swift 6.4.
+`python3 scripts/verify-mac-auth-ui.py` checks actual Mac controllers in an isolated test bundle: old endpoint/audience preferences are ignored, signed-out content has no library toolbar, busy/error states remain retryable, and account changes/sign-out replace the prior UI and close readers. Synthetic identities are used only in this test harness; this is not proof of hosted login/API authentication.
+
+After source file additions/removals, run `python3 scripts/generate-xcode-project.py`. It regenerates the project/plists, creates missing shared schemes, preserves existing schemes and Xcode-managed signing settings, and leaves `Local.xcconfig` untouched. App source currently uses Swift 5 language mode for Apple framework compatibility; shared core uses Swift 6 with Sendable models. The compiler is Swift 6.4.
 
 See [UI spec](ui-spec.md), [Apple requirements](requirements.md), [Apple spec](spec.md), [implementation status](../implementation-status.md) and [mock](../mock/README.md).

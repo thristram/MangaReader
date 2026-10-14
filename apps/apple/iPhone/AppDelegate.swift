@@ -18,7 +18,7 @@ final class PhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
       let app = UIApplication.shared.delegate as? PhoneAppDelegate
     else { return }
     let w = UIWindow(windowScene: scene)
-    w.rootViewController = PhoneTabController(session: app.session)
+    w.rootViewController = PhoneRootController(session: app.session)
     window = w
     w.makeKeyAndVisible()
     app.session.restore()

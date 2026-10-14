@@ -1,20 +1,20 @@
 # thristram-auth integration
 
-MangaReader is an **API resource / audience**, while the Mac and iPhone apps are two **public OAuth clients**. Tokens minted for Mosaic or another resource do not grant access to MangaReader. The auth repo already supports managed per-client API resource/scope policies; its production deployment/database migration is a separate operation.
+MangaReader is an **API resource / audience**, while the Mac and iPhone apps use **public OAuth client registrations**. Tokens minted for Mosaic or another resource do not grant access to MangaReader. The auth repo already supports managed per-client API resource/scope policies; its production deployment/database migration is a separate operation.
 
 ## Resource policy
 
 In thristram-auth's configuration, append the permanent Manga identifier to `OAUTH_API_RESOURCES`:
 
 ```json
-[{"identifier":"https://manga.example.com","allowedScopes":["manga:read","manga:state:write","manga:manage"]}]
+[{"identifier":"https://manga-api.thenoirclub.com","allowedScopes":["manga:read","manga:state:write","manga:manage"]}]
 ```
 
-Preserve existing resources. `https://manga.example.com` is an example, not the chosen production domain. The exact identifier must match `MANGA_API_AUDIENCE` server-side and `MangaAPIAudience` in both apps. It is stable across server preview deployments.
+Preserve existing resources. The exact identifier must match `MANGA_API_AUDIENCE` server-side and `MangaAPIAudience` in both apps (no trailing slash). It is stable across server preview deployments.
 
 ## Clients
 
-In the hosted admin UI register two Mac/iPhone native/public PKCE clients with the Manga resource explicitly assigned. Use exact callbacks:
+The supplied public client ID `uFMdiHmwRvJAxJKZGzMXrYJOHMtZtjsC` is currently configured for both native apps. Its registration must enable PKCE authorization-code and refresh flows, explicitly assign the Manga resource/scopes, and allow **both** exact callbacks:
 
 - Mac: `com.thristram.mangareader.mac:/oauth/callback`
 - iPhone: `com.thristram.mangareader.iphone:/oauth/callback`
@@ -26,6 +26,8 @@ Mac scopes: `openid profile email offline_access manga:read manga:state:write ma
 iPhone scopes: `openid profile email offline_access manga:read manga:state:write`.
 
 No client secret is embedded. Browser consent remains enabled. Public dynamic registration does not grant this managed Manga resource implicitly.
+
+Separate platform registrations remain supported via `MAC_OAUTH_CLIENT_ID` and `IPHONE_OAUTH_CLIENT_ID` in optional Apple `Local.xcconfig`; they can further limit iPhone's allowed scopes. With the current shared registration, iPhone still requests only read/state scopes. These public IDs and API/auth deployment values are build configuration, not app settings. A supplied client ID alone does not prove that its hosted registration has the required callbacks/grants/resource policy.
 
 ## Native login sequence
 

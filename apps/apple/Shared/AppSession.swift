@@ -142,9 +142,26 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
           let matches = items.filter { $0.name == name }
           return matches.count == 1 ? matches[0].value : nil
         }
-        guard single("state") == state, single("error") == nil, let code = single("code") else {
+        guard single("state") == state else {
           throw LoginError.invalidCallback
         }
+        if let error = single("error") {
+          // Only a fixed public error code is logged; never the callback/code/token.
+          let known = ["access_denied", "invalid_scope", "invalid_target", "invalid_client",
+            "unauthorized_client", "invalid_request", "server_error", "temporarily_unavailable"]
+          if known.contains(error) { NSLog("MangaReader OAuth error: %@", error) }
+          let message: String
+          switch error {
+          case "access_denied": message = "Sign-in was declined. You can try again."
+          case "invalid_scope", "invalid_target":
+            message = "This app is not authorized to access your manga library."
+          case "invalid_client", "unauthorized_client":
+            message = "This app’s sign-in registration is unavailable."
+          default: message = "Sign-in could not be completed. Please try again."
+          }
+          throw LoginError.server(message)
+        }
+        guard let code = single("code") else { throw LoginError.invalidCallback }
         let tokens = try await exchange(
           endpoint: d.token_endpoint,
           fields: [
@@ -176,7 +193,14 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
         loadCache()
         try await synchronize()
         startPolling()
-      } catch { status = error.localizedDescription }
+      } catch {
+        guard epoch == attempt else { return }
+        webSession = nil
+        if let error = error as? ASWebAuthenticationSessionError, error.code == .canceledLogin {
+          status = "Sign in to your MangaReader library."
+        } else { status = error.localizedDescription }
+      }
+      guard epoch == attempt else { return }
       busy = false
       onChange?()
     }
@@ -189,6 +213,8 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
     let attempt = epoch
     credentials = stored
     busy = true
+    status = "Restoring your session…"
+    onChange?()
     Task {
       do {
         let verified = try await api.me()
@@ -207,6 +233,7 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
         credentials = nil
         status = "Sign in to reconnect: " + error.localizedDescription
       }
+      guard epoch == attempt else { return }
       busy = false
       onChange?()
     }

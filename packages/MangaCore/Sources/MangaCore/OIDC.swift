@@ -7,7 +7,7 @@ public enum LoginError: Error, LocalizedError {
   public var errorDescription: String? {
     switch self {
     case .invalidConfiguration:
-      return "Configure the API, issuer and OAuth client before signing in."
+      return "Sign-in is not configured for this build."
     case .invalidCallback: return "The sign-in callback could not be verified."
     case .invalidToken: return "The identity token could not be verified."
     case .server(let v): return v

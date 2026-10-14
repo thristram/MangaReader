@@ -16,7 +16,7 @@ final class PhoneSettingsController: UITableViewController {
   }
   override func numberOfSections(in tableView: UITableView) -> Int { 3 }
   override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-    section == 0 ? 2 : section == 1 ? 3 : 1
+    section == 0 ? 1 : section == 1 ? 3 : 1
   }
   override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String?
   { ["Connections", "Reading", "Account"][section] }
@@ -27,9 +27,6 @@ final class PhoneSettingsController: UITableViewController {
     cell.accessoryType = .disclosureIndicator
     switch (indexPath.section, indexPath.row) {
     case (0, 0):
-      cell.textLabel?.text = "Metadata & Sign-in"
-      cell.detailTextLabel?.text = AppConfiguration.current().apiURL.host
-    case (0, 1):
       cell.textLabel?.text = "SMB Storage Roots"
       cell.detailTextLabel?.text = "NAS credentials stay in Keychain on this device"
     case (1, 0):
@@ -58,8 +55,7 @@ final class PhoneSettingsController: UITableViewController {
   override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
     tableView.deselectRow(at: indexPath, animated: true)
     switch (indexPath.section, indexPath.row) {
-    case (0, 0): connectionSettings()
-    case (0, 1): chooseRoot()
+    case (0, 0): chooseRoot()
     case (1, 0): language()
     case (2, 0):
       if session.account == nil { session.login() } else { session.signOut() }
@@ -85,40 +81,6 @@ final class PhoneSettingsController: UITableViewController {
         UserDefaults.standard.set(code, forKey: "ContentLanguage")
         self?.tableView.reloadData()
         self?.session.onChange?()
-      })
-    a.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-    present(a, animated: true)
-  }
-  func connectionSettings() {
-    let c = AppConfiguration.current()
-    let a = UIAlertController(
-      title: "Metadata & Sign-in",
-      message: "Use your registered iPhone public client ID. No client secret.",
-      preferredStyle: .alert)
-    let values = [
-      ("MangaAPIURL", c.apiURL.absoluteString), ("AuthIssuer", c.issuer.absoluteString),
-      ("MangaAPIAudience", c.audience), ("OAuthClientID", c.clientId),
-    ]
-    for (key, value) in values {
-      a.addTextField {
-        $0.placeholder = key
-        $0.text = value
-        $0.autocapitalizationType = .none
-        $0.autocorrectionType = .no
-      }
-    }
-    a.addAction(
-      UIAlertAction(title: "Save & Sign out", style: .default) { [weak self] _ in
-        guard let fields = a.textFields else { return }
-        for i in 0..<3 {
-          guard let url = URL(string: fields[i].text ?? ""), url.scheme == "https", url.host != nil
-          else { return }
-        }
-        self?.session.signOut()
-        for (i, pair) in values.enumerated() {
-          UserDefaults.standard.set(fields[i].text, forKey: pair.0)
-        }
-        self?.tableView.reloadData()
       })
     a.addAction(UIAlertAction(title: "Cancel", style: .cancel))
     present(a, animated: true)

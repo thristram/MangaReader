@@ -24,6 +24,7 @@
 		86B873BECD776C8837E360B2 /* Mac/SettingsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D6B2EF152ABB125FC5980AB /* Mac/SettingsController.swift */; };
 		8912E09E57D3B7E8DE2D2791 /* Shared/Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9AD141841DDB42E5BFC7183 /* Shared/Keychain.swift */; };
 		9A7DBF2376222E20584E7C55 /* Shared/AppSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3F4E539C47BF0F4F306B2E2 /* Shared/AppSession.swift */; };
+		ABEED89AE396966C3E67FF98 /* Mac/RootController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D0B5EF6CE695D9A02A5F1C6 /* Mac/RootController.swift */; };
 		ACA391E05DD258F2373A3F24 /* Shared/LocalMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C25324C8E4FB93D5B344408 /* Shared/LocalMedia.swift */; };
 		BF72FF5A816AE6F6907DEE98 /* Mac/ImportController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97219F986C9ABFFC9351C471 /* Mac/ImportController.swift */; };
 		C9616552E52E66EDE8147A6E /* MangaCore in Frameworks */ = {isa = PBXBuildFile; productRef = 3035110937FD260523B4338C /* MangaCore */; };
@@ -31,12 +32,14 @@
 		D92B59912FCF74E3EC1BD2FB /* Mac/AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD1D604FFFE2810050E6D569 /* Mac/AppDelegate.swift */; };
 		DC20F9E09E9165962842A575 /* Mac/LibraryController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B41FC8A5300E2FF28593FCD /* Mac/LibraryController.swift */; };
 		E9CB29DAC0A1E78A31AA0D9E /* Mac/ReaderController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16BBDE534187D60FD41C60E /* Mac/ReaderController.swift */; };
+		F677CEC1C316B3AC1A97E6E0 /* iPhone/RootController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCAB3E26BD022249895FF435 /* iPhone/RootController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		1405DF66CBE219B0BF6355BC /* Config/Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Base.xcconfig; sourceTree = "<group>"; };
 		3B41FC8A5300E2FF28593FCD /* Mac/LibraryController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/LibraryController.swift; sourceTree = "<group>"; };
 		3C25324C8E4FB93D5B344408 /* Shared/LocalMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/LocalMedia.swift; sourceTree = "<group>"; };
+		3D0B5EF6CE695D9A02A5F1C6 /* Mac/RootController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/RootController.swift; sourceTree = "<group>"; };
 		3E62CBE8319CE53B53C37C6C /* Shared/SMBMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/SMBMedia.swift; sourceTree = "<group>"; };
 		4DB7D65CCD5814C24C222B85 /* MangaReaderiPhone.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = MangaReaderiPhone.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		560DA58610367D5893DB55C7 /* MangaReaderMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = MangaReaderMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -50,8 +53,10 @@
 		A9AD141841DDB42E5BFC7183 /* Shared/Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/Keychain.swift; sourceTree = "<group>"; };
 		B4871B7E97C11CD61A8E8AAC /* Mac/EditController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/EditController.swift; sourceTree = "<group>"; };
 		C3F4E539C47BF0F4F306B2E2 /* Shared/AppSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/AppSession.swift; sourceTree = "<group>"; };
+		DCAB3E26BD022249895FF435 /* iPhone/RootController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iPhone/RootController.swift; sourceTree = "<group>"; };
 		DD1D604FFFE2810050E6D569 /* Mac/AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mac/AppDelegate.swift; sourceTree = "<group>"; };
 		DFD3EE87951D4DADDCD75A76 /* iPhone/ReaderController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iPhone/ReaderController.swift; sourceTree = "<group>"; };
+		009FB51ABF077B1ABD8DCDF2 /* Config/Service.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Service.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -93,6 +98,7 @@
 				97219F986C9ABFFC9351C471 /* Mac/ImportController.swift */,
 				3B41FC8A5300E2FF28593FCD /* Mac/LibraryController.swift */,
 				A16BBDE534187D60FD41C60E /* Mac/ReaderController.swift */,
+				3D0B5EF6CE695D9A02A5F1C6 /* Mac/RootController.swift */,
 				5D6B2EF152ABB125FC5980AB /* Mac/SettingsController.swift */,
 				C3F4E539C47BF0F4F306B2E2 /* Shared/AppSession.swift */,
 				61C5822ED106F7D98DE53020 /* Shared/Configuration.swift */,
@@ -102,8 +108,10 @@
 				6BC07428D5509757FD5949A5 /* iPhone/AppDelegate.swift */,
 				5D1591712188616E422BCCAC /* iPhone/LibraryController.swift */,
 				DFD3EE87951D4DADDCD75A76 /* iPhone/ReaderController.swift */,
+				DCAB3E26BD022249895FF435 /* iPhone/RootController.swift */,
 				810B26D8730F150E7A96BDB4 /* iPhone/SettingsController.swift */,
 				1405DF66CBE219B0BF6355BC /* Config/Base.xcconfig */,
+				009FB51ABF077B1ABD8DCDF2 /* Config/Service.xcconfig */,
 				615B463D1028E4E24B674CF7 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -214,6 +222,7 @@
 				52A8D4E938DCB042D88645CC /* iPhone/AppDelegate.swift in Sources */,
 				337A25D27AB540A595697C10 /* iPhone/LibraryController.swift in Sources */,
 				64680F977221C7D86AC6D324 /* iPhone/ReaderController.swift in Sources */,
+				F677CEC1C316B3AC1A97E6E0 /* iPhone/RootController.swift in Sources */,
 				6652CB4C1AC1317FDFDE706E /* iPhone/SettingsController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -227,6 +236,7 @@
 				BF72FF5A816AE6F6907DEE98 /* Mac/ImportController.swift in Sources */,
 				DC20F9E09E9165962842A575 /* Mac/LibraryController.swift in Sources */,
 				E9CB29DAC0A1E78A31AA0D9E /* Mac/ReaderController.swift in Sources */,
+				ABEED89AE396966C3E67FF98 /* Mac/RootController.swift in Sources */,
 				86B873BECD776C8837E360B2 /* Mac/SettingsController.swift in Sources */,
 				20C6A619565FA4A7A61C0208 /* Shared/AppSession.swift in Sources */,
 				235F9F4A53A80EED318F67DB /* Shared/Configuration.swift in Sources */,

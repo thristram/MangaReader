@@ -16,6 +16,8 @@ flowchart LR
 
 Media is not stored in MongoDB or uploaded to the API. Storage-root records are account-owned logical references. Device bindings contain bookmarks or NAS host/share/base path and credentials. NAS credentials stay in each device's Keychain. Two people pointing at the same NAS folder still have separate app metadata; the NAS's own authorization governs physical file access.
 
+Apple deployment values come from project configuration, with API/resource `https://manga-api.thenoirclub.com`; there is no runtime endpoint editor. Native root controllers show a full-window Sign In welcome page until account verification, then mount the account's library; sign-out removes private UI. See [ADR 0008](adr/0008-build-config-and-welcome.md).
+
 ## Data model v1
 
 - `author`: creator name/site IDs; unknown creator is an ordinary account-owned author titled `other author`.

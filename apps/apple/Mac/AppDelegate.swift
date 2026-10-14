@@ -47,7 +47,7 @@ import AppKit
     window.minSize = NSSize(width: 760, height: 560)
     window.titlebarAppearsTransparent = true
     window.toolbarStyle = .unified
-    window.contentViewController = MacLibraryController(session: session)
+    window.contentViewController = MacRootController(session: session)
     window.setContentSize(NSSize(width: 1200, height: 800))
     window.center()
     window.makeKeyAndOrderFront(nil)

@@ -1,6 +1,6 @@
-MANGA_API_URL = https:/$()/manga.example.com
-AUTH_ISSUER = https:/$()/auth.example.com/api/auth
-MANGA_API_AUDIENCE = https:/$()/manga.example.com
-MAC_OAUTH_CLIENT_ID = configure-mac-client-id
-IPHONE_OAUTH_CLIENT_ID = configure-iphone-client-id
+// Public client registration; no client secret belongs in the app.
+MAC_OAUTH_CLIENT_ID = uFMdiHmwRvJAxJKZGzMXrYJOHMtZtjsC
+IPHONE_OAUTH_CLIENT_ID = uFMdiHmwRvJAxJKZGzMXrYJOHMtZtjsC
 #include? "Local.xcconfig"
+// Deployment values win over any obsolete URLs in an existing Local.xcconfig.
+#include "Service.xcconfig"

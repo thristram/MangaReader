@@ -14,9 +14,11 @@ No online comic scraping, extension marketplace, hosted media upload or shared p
 | --- | --- |
 | ACC-01 | Both Mac and iPhone must sign in to thristram-auth using ASWebAuthenticationSession, hosted sign-in/consent, public clients and S256 PKCE. No embedded password form or native client secret. |
 | ACC-02 | All metadata, personal state, storage references, file plans, caches and downloads belong to the verified account. A client cannot supply an owner ID to change ownership. Cross-account CRUD, joins, references, search and sync fail closed. |
+| ACC-03 | Signed-out/restore state shows a full-window welcome screen and Sign In; no library/sidebar/tab bar. Hosted ASWeb sign-in reveals library only after identity verification; sign-out returns to welcome and closes private UI. |
 | ARC-01 | Control plane (metadata, authorization, revisions, plans) is separate from data plane (local files, NAS SMB bytes, offline copies). Vercel never proxies comic bytes or performs NAS moves. |
 | ARC-02 | Small Node.js / TypeScript API deployable on Vercel; MongoDB canonical metadata. Apple and server live in a monorepo with independent builds/deployments. Auth stays separate. |
-| ARC-03 | Shared docs plus separate Apple/server docs cover requirements, spec, ADR, API contract, setup, usage and data migration. Sample configuration contains placeholders only. UI mock is retained in `docs/mock`. |
+| ARC-03 | Shared docs plus separate Apple/server docs cover requirements, spec, ADR, API contract, setup, usage and data migration. Samples contain no secrets; public deployment domains may be real and credential placeholders remain unfilled. UI mock is retained in `docs/mock`. |
+| ARC-04 | Apple API defaults to `https://manga-api.thenoirclub.com`. Deployment URLs/resource are project configuration, changed by rebuilding, with no runtime endpoint editor; old app preferences cannot override them. |
 
 ## Storage and organization
 

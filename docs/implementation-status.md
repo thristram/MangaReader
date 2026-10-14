@@ -42,7 +42,7 @@ Baseline: 2026-10-13. This is a working native/server foundation, **not a comple
 
 Verification results are recorded in [verification](verification.md). Local tests cover real Mongo persistence/CAS plus account/scope isolation and token security; shared Swift tests cover path safety, sorting, file journaling and locale/identity rules. Both native targets are built without distribution signing.
 
-Live ASWeb sign-in/refresh against production thristram-auth, real NAS interoperability, actual device gesture/layout testing and local Ollama model output require your real configuration; no production deployment/migration or NAS file operation is claimed by this milestone. Placeholder URLs/client IDs intentionally cannot authenticate.
+Live ASWeb sign-in/refresh against production thristram-auth, real NAS interoperability, actual device gesture/layout testing and local Ollama model output require configuration-dependent acceptance. Native deployment URLs and the supplied public OAuth client ID are now configured in the project; hosted callback/grant/resource policy and successful account login still require verification. Signed-out UI is a full-window native welcome page; only verified identity reveals the library. No production deployment/migration or NAS file operation is claimed by the initial milestone; follow-up verification is recorded separately.
 
 ## Next acceptance order
 

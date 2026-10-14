@@ -12,7 +12,7 @@ Common comic/chapter tile: cover, title, optional author/progress line. Download
 
 | Page | Content and actions |
 | --- | --- |
-| Sign-in | App identity, hosted-login button, Connections entry, clear configuration/cancellation error. No native password form. |
+| Sign-in | Full-window app identity, Sign In and progress/error/retry. No sidebar/library toolbar or configuration form. Button opens hosted ASWeb login; cancellation remains on welcome. |
 | Library / All Comics | Shared cover grid; search, sort/filter and unread/progress state; work opens detail, standalone chapter opens reader; download/edit on tiles. |
 | Continue Reading | Chapter tiles with current page/progress, resume action and edit/download where applicable. |
 | Favorites | Same collection grid; favorite entities, authors and pages as appropriate; toggle/remove favorite. |
@@ -37,7 +37,7 @@ Common comic/chapter tile: cover, title, optional author/progress line. Download
 | Pending Organization | Exact source→destination/file rename plan, conflicts/changed files, review and explicit Commit. Metadata already autosaved. |
 | Conflict Review | No-overwrite choices, collision/external-change detail, safe destination alternatives; preview before commit. |
 | Commit Result | Per-operation success/failure/recovery status with retry only after journal reconciliation. |
-| Settings → Connections | Metadata API, issuer/resource/client and root bindings. Public values separate from Keychain secrets. |
+| Settings → Connections | Local/mounted SMB root bindings only; API/auth deployment configuration is in the project. |
 | Settings → Reading | UI language, preferred content language, fallback, reader fit/direction/description and NSFW display. |
 | Settings → Ollama | Local host/model URL, model, editable system prompt and test connection. |
 | Settings → Sync | Verified account/device, sync state/conflicts/outbox/cache and sign-out. |
@@ -66,8 +66,8 @@ Common comic/chapter tile: cover, title, optional author/progress line. Download
 | Downloads | Root tab, chapter collections and local download actions, queued/progress/offline state. |
 | Reader / PDF / Video | Hide tab bar; image viewport full-height; native Photos-like horizontal transitions, pinch zoom, top-right language menu, personal page marks. Tap toggles controls. |
 | Thumbnails | All-page collection navigates to selected page; no source-page reordering. |
-| Settings | Native inset grouped lists → connection/read/sync subpages; public auth config, SMB Keychain bindings, preferred manga language, NSFW, cache/download controls and sign-out. No Ollama administration. |
-| Sign-in | Hosted ASWeb flow from signed-out state; native library remains hidden until verified account returned. |
+| Settings | Native inset grouped lists → storage/read/sync subpages; SMB Keychain bindings, preferred manga language, NSFW, cache/download controls and sign-out. No endpoint editor or Ollama administration. |
+| Sign-in | Full-screen UIKit welcome with app identity, Sign In and progress/error/retry. No nav bar/tab bar. Button opens hosted ASWeb login; verified identity reveals tabs, sign-out returns to welcome. |
 
 ## Gestures and state
 

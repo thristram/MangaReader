@@ -30,16 +30,12 @@ final class MacSettingsController: NSViewController {
     let title = NSTextField(labelWithString: section)
     title.font = .systemFont(ofSize: 24, weight: .semibold)
     stack.addArrangedSubview(title)
-    let c = AppConfiguration.current()
     var values: [(String, String, String)] = []
     switch section {
     case "Connections":
-      values = [
-        ("MangaAPIURL", "Metadata API URL", c.apiURL.absoluteString),
-        ("AuthIssuer", "Auth issuer", c.issuer.absoluteString),
-        ("MangaAPIAudience", "API resource / audience", c.audience),
-        ("OAuthClientID", "Mac public OAuth client ID", c.clientId),
-      ]
+      stack.addArrangedSubview(
+        NSTextField(wrappingLabelWithString: "Connect your library to local or SMB storage on this Mac.")
+      )
     case "Reading":
       values = [("ContentLanguage", "Preferred manga language", AppConfiguration.preferredLanguage)]
       let nsfw = NSButton(
@@ -92,24 +88,6 @@ final class MacSettingsController: NSViewController {
     session.onChange?()
   }
   @objc func save() {
-    for (key, f) in fields {
-      if ["MangaAPIURL", "AuthIssuer", "MangaAPIAudience"].contains(key) {
-        guard let url = URL(string: f.stringValue), url.scheme == "https", url.host != nil else {
-          let a = NSAlert()
-          a.messageText = "Enter a valid HTTPS URL"
-          a.runModal()
-          return
-        }
-      }
-    }
-    if section == "Connections"
-      && fields.contains(where: {
-        UserDefaults.standard.string(forKey: $0.key) != $0.value.stringValue
-      })
-    {
-      media.release()
-      session.signOut()
-    }
     for (key, f) in fields { UserDefaults.standard.set(f.stringValue, forKey: key) }
     session.onChange?()
     dismiss(self)

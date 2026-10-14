@@ -255,9 +255,7 @@ final class MacLibraryController: NSSplitViewController, NSToolbarDelegate,
       lastOwner = session.account?.ownerId
     }
     heading.stringValue = work?.title(in: AppConfiguration.preferredLanguage) ?? section
-    status.stringValue =
-      session.account == nil
-      ? session.status + " Use Connections to configure sign-in." : session.status
+    status.stringValue = session.status
     guard session.account != nil else {
       rows = []
       grid.reloadData()

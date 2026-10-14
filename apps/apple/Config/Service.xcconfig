@@ -1,0 +1,6 @@
+// Public deployment configuration shared by Mac and iPhone.
+// Change these here and rebuild; they are not editable inside the app.
+// $() prevents xcconfig from treating URL slashes as comments.
+MANGA_API_URL = https:/$()/manga-api.thenoirclub.com
+MANGA_API_AUDIENCE = https:/$()/manga-api.thenoirclub.com
+AUTH_ISSUER = https:/$()/auth.thenoirclub.com/api/auth

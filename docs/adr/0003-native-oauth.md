@@ -2,6 +2,8 @@
 
 Status: Accepted · 2026-10-13
 
+Update: [ADR 0008](0008-build-config-and-welcome.md) supersedes the initial two-registration assumption with the supplied shared public registration and per-platform overrides. Other security decisions below remain unchanged.
+
 ## Context
 
 The user wants a unified thristram-auth login, mandatory account isolation and a separate Manga API audience. Native clients cannot protect a client secret.
