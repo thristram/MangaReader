@@ -80,8 +80,8 @@ No online comic scraping, extension marketplace, hosted media upload or shared p
 
 | ID | Requirement / acceptance |
 | --- | --- |
-| UI-01 | macOS native AppKit/Apple frameworks; Apple Music sidebar and single-row unified toolbar. Native Liquid Glass surfaces, not manually drawn fake glass. |
-| UI-02 | iPhone uses UIKit navigation/tab bars with native positioning, transitions, gestures and Liquid Glass. Apple Music large title/search, floating bottom bar and continue-reading accessory. |
+| UI-01 | macOS native SwiftUI/Apple frameworks with AppKit lifecycle; Apple Music sidebar and single-row unified toolbar. Native Liquid Glass surfaces, not manually drawn fake glass. |
+| UI-02 | iPhone uses SwiftUI system navigation/tab bars with UIKit lifecycle with native positioning, transitions, gestures and Liquid Glass. Apple Music large title/search, floating bottom bar and continue-reading accessory. |
 | UI-03 | Native directional navigation: vertical scrolling, horizontal paging and back swipes where applicable. Preserve platform gesture meanings rather than forcing every direction into every screen. |
 | UI-04 | Library and comic detail use the same thumbnail grid. Download overlays cover top-right; edit icon aligns with title's top and cover's right edge. iPhone omits edit icons. |
 | UI-05 | Author page uses one row per author, avatar/name left, several works' thumbnails aligned right. Series/history/downloads use library grids. |

@@ -122,3 +122,20 @@ extension CoreTests {
     XCTAssertFalse(Visibility.visible(chapter, in: [chapter, author], showNSFW: true))
   }
 }
+
+// Missing aligned translations must never silently reuse the same numeric page.
+extension CoreTests {
+  func testCanonicalMediaAlignment() {
+    var media = MediaVersion(language: "zh", kind: "images", storageRootId: "root", relativePaths: ["a.png", "b.png"], pageCount: 2)
+    XCTAssertEqual(media.sourcePage(at: 1), 1)
+    XCTAssertNil(media.sourcePage(at: 2))
+    media.pageAlignment = [1, nil, 0, 99, -1]
+    XCTAssertEqual(media.sourcePage(at: 0), 1)
+    XCTAssertNil(media.sourcePage(at: 1))
+    XCTAssertEqual(media.sourcePage(at: 2), 0)
+    XCTAssertNil(media.sourcePage(at: 3))
+    XCTAssertNil(media.sourcePage(at: 4))
+    XCTAssertNil(media.sourcePage(at: 5))
+    XCTAssertNil(media.sourcePage(at: -1))
+  }
+}

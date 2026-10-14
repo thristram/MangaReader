@@ -4,7 +4,7 @@ This is the intended full UI, including screens pending implementation. [Impleme
 
 ## Shared visual rules
 
-System appearance/type/accessibility; UI starts in English. Content titles/descriptions prefer the chosen manga language independently. Use real AppKit/UIKit bars, menus, sheets, collection views, native transitions and Liquid Glass on OS 26+. One Mac unified toolbar row; no second application navbar. iPhone large titles/search and floating system tabs. Use vertical scroll, back swipe, horizontal reader paging in their native contexts; respect VoiceOver, keyboard and Reduce Motion.
+System appearance/type/accessibility; UI starts in English. Content titles/descriptions prefer the chosen manga language independently. Use SwiftUI system navigation, bars, menus, sheets, adaptive collections, native transitions and Liquid Glass on OS 26+. One Mac unified toolbar row; no second application navbar. iPhone large titles/search and floating system tabs. Use vertical scroll, back swipe, horizontal reader paging in their native contexts; respect VoiceOver, keyboard and Reduce Motion.
 
 Common comic/chapter tile: cover, title, optional author/progress line. Download icon overlays upper-right cover. Mac pencil is icon-only beside title, top aligned with title and right aligned with cover edge. iPhone has no pencil. No language selector on thumbnails. NSFW covers never leak through hidden views.
 
@@ -53,7 +53,7 @@ Common comic/chapter tile: cover, title, optional author/progress line. Download
 
 ## iPhone pages
 
-| Page | UIKit behavior |
+| Page | Native SwiftUI behavior |
 | --- | --- |
 | Library | Root large title and search, two-column cover grid, filter/sort More menu; download only, no edit. |
 | Comic / Series Detail | Push to the same chapter collection layout; swipe back; no separate chapter/language management page. |
@@ -67,8 +67,12 @@ Common comic/chapter tile: cover, title, optional author/progress line. Download
 | Reader / PDF / Video | Hide tab bar; image viewport full-height; native Photos-like horizontal transitions, pinch zoom, top-right language menu, personal page marks. Tap toggles controls. |
 | Thumbnails | All-page collection navigates to selected page; no source-page reordering. |
 | Settings | Native inset grouped lists → storage/read/sync subpages; SMB Keychain bindings, preferred manga language, NSFW, cache/download controls and sign-out. No endpoint editor or Ollama administration. |
-| Sign-in | Full-screen UIKit welcome with app identity, Sign In and progress/error/retry. No nav bar/tab bar. Button opens hosted ASWeb login; verified identity reveals tabs, sign-out returns to welcome. |
+| Sign-in | Full-screen SwiftUI welcome with app identity, Sign In and progress/error/retry. No nav bar/tab bar. Button opens hosted ASWeb login; verified identity reveals tabs, sign-out returns to welcome. |
 
 ## Gestures and state
 
-System navigation controllers own push/pop and edge-back interactions. Readers use native page containers; zoom pan should not accidentally page. Vertical library scroll drives native tab minimization; continue-reading accessory participates in the system tab environment. No custom imitation of tab-bar glass/position animation. Changing media language retains canonical alignment; missing media/text fallbacks are separate. Popup confirmation is reserved for actual edit/create/commit flows, never required to pick a translation target on one-click text translate.
+System NavigationStack containers own push/pop and edge-back interactions. Readers use native page containers; zoom pan should not accidentally page. Vertical library scroll drives native tab minimization; continue-reading accessory participates in the system tab environment. No custom imitation of tab-bar glass/position animation. Changing media language retains canonical alignment; missing media/text fallbacks are separate. Popup confirmation is reserved for actual edit/create/commit flows, never required to pick a translation target on one-click text translate.
+
+## Current native review
+
+The SwiftUI rewrite and page-by-page checks are recorded in [UI verification](ui-verification.md). This specification retains the full accepted product scope; the status document distinguishes remaining service/storage features from implemented screens.

@@ -8,7 +8,7 @@ This repository contains the first development milestone, not a completed P0 rel
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/apple` | AppKit Mac application and UIKit iPhone application |
+| `apps/apple` | SwiftUI Mac and iPhone applications; native lifecycle and media components |
 | `packages/MangaCore` | Shared Swift models, API client, language policy, import scanner, safe path/move logic and OIDC validation |
 | `apps/server` | Express / TypeScript control plane; MongoDB metadata; thristram-auth bearer verification |
 | `packages/api-contract/openapi.json` | Generated OpenAPI 3.1 contract |
@@ -43,8 +43,8 @@ The local API can be exercised through `/health` and authenticated requests, but
 ## Usage
 
 1. Open the app's full-window welcome screen and click **Sign In** to open hosted Thristram login in `ASWebAuthenticationSession`. A verified account reveals the library; sign-out returns to the welcome screen.
-2. On Mac, open Import; drop folders anywhere in the sheet or select folders/PDF/MP4/WebM files. Review each chapter, author, optional comic, description, language, source IDs and tags.
-3. The default primary action, **Add to Library & Move Files**, explicitly commits that import. Pick the managed library root. This milestone moves a clean chapter folder/file within one volume; add-only leaves files in place. Mixed folders and unsupported moves are refused.
+2. On Mac, open Import; drop folders anywhere in Import & Identify or select folders/PDF/MP4/WebM files. Review each chapter, author, optional comic, description, language, source IDs and tags.
+3. The default primary action, **Add to Library & Move Files**, explicitly commits that import. Pick the managed library root and review the source/destination before Commit. This milestone moves a clean chapter folder/file within one volume; add-only leaves files in place. Mixed folders and unsupported moves are refused.
 4. Open a comic to see its chapter grid; open a chapter to read. Use the pencil to edit metadata. Set an Ollama host/model to translate title/description into the preferred manga language.
 5. On iPhone, configure the matching storage root's SMB server, share, base folder and credentials. Read/download a chapter or download a work/series/author. The current transport stages the chosen chapter locally before opening it. Download files stay inside the account's app storage.
 6. Favorites, stars and reading progress use the metadata API. Apps refresh metadata every 30 seconds while running; pull to refresh is also available. Offline queued edits and background downloads are not in this milestone.
@@ -69,5 +69,7 @@ xcodebuild -project apps/apple/MangaReader.xcodeproj -scheme MangaReaderiPhone \
 After adding/removing Apple source files, run `python3 scripts/generate-xcode-project.py`. It regenerates the checked-in project and shared schemes deterministically, preserving the ignored local config. Refresh the API contract when changing validation schemas.
 
 ## Documentation
+
+Native screens use SwiftUI on both platforms. [Page-by-page UI verification](docs/apple/ui-verification.md) includes native screenshots and the isolated preview workflow. The historical mock remains editable under `docs/mock`.
 
 Start with [docs index](docs/README.md), [requirements](docs/requirements.md), [specification](docs/spec.md), [API contract](docs/api-contract.md), [ADRs](docs/adr/README.md) and [UI preview](docs/mock/index.html).

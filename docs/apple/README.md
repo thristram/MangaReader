@@ -1,6 +1,6 @@
 # Apple apps — setup and usage
 
-The two app targets are native: `MangaReaderMac` uses AppKit, `MangaReaderiPhone` uses UIKit. They share Swift models/network/security/storage policies through `packages/MangaCore` and shared app services. iPhone has no metadata/source-file management UI.
+The two app targets are native: both `MangaReaderMac` and `MangaReaderiPhone` use SwiftUI, hosted by AppKit/UIKit lifecycle controllers. They share Swift models/network/security/storage policies through `packages/MangaCore` and shared app services. iPhone has no metadata/source-file management UI.
 
 ## Xcode setup
 
@@ -14,25 +14,26 @@ No `.env` is read by an Apple application. `Service.xcconfig` and client IDs are
 
 ## Mac usage
 
-- While signed out, the entire window shows MangaReader identity and **Sign In**, with no library/sidebar/toolbar. Sign In opens the hosted ASWeb login, not a native credential form. Restore/sign-in shows progress and prevents duplicate requests; cancellation leaves a retryable welcome screen. After identity verification, the unified toolbar and library sidebar appear; the account toolbar icon signs out and returns to the welcome screen, closing old readers/sheets.
-- Import opens a native sheet. Drop folders anywhere on it or choose files. Candidates use natural filename sort. Review a prominent cover preview and fill chapter, author, comic, description, tags and source IDs.
-- Author/comic fields search existing entries; New Author opens a popup; Create Comic can select/create a series. Tags support existing-name completion and Add/Create. Full removable token-chip editing and alignment popup remain pending.
-- Default primary action explicitly adds metadata and moves the clean chapter folder/file into a chosen managed root. Initial mover only supports one-volume atomic moves and refuses mixed folders/overwrite. Add without moving creates metadata only.
-- Click a comic to get a chapter grid. The title-adjacent pencil opens the metadata sheet. Save keeps media paths unchanged. Translate calls configured local Ollama and stores preferred-locale text immediately, with no new popup.
-- Open a chapter to read using AppKit paging, PDFKit or AVKit. Images fill viewport height; pinch zoom/arrow controls and page favorite/star are present. Reader language control addresses actual media versions.
-- Connect an existing storage root to a local/Finder-mounted SMB folder in Connections. Finder-mounted NAS access is delegated to macOS; this initial Mac UI does not configure a direct SMB connection.
+- Sign In opens hosted Thristram login in ASWebAuthenticationSession. Until identity is verified, a full-window welcome is the only screen. Sync & Account contains Sign Out; changing accounts dismisses old readers/editors and releases storage access.
+- The native sidebar uses SF Symbols + text, grouped Library/Activity/Manage sections and Settings submenus. One unified toolbar contains back, import, sync and search. All Comics, Continue Reading, Favorites, Starred, Series, History and Downloads share cover cards. Download is at the cover's upper-right; the pencil aligns with the title's top and the cover's right edge.
+- Authors are horizontal rows with an avatar/name on the left and several work covers on the right. Author/series/comic/tag detail opens a simple child collection. Comic title/description can be translated directly to the preferred content language without another dialog.
+- Import & Identify accepts folders dropped anywhere on the page or selected through the dashed drop box. Images are naturally sorted; each PDF/MP4/WebM is a chapter. Multiple candidates are reviewed one at a time. Fill author/comic/description/tags/source IDs; searchable dropdowns offer existing entries and a create popup. A comic can select/create its series.
+- **Add to Library & Move Files** is the primary action. Choose the managed root and review exact source/destination before **Commit & Add to Library**. Clean folders/files move on the same volume only, with no overwrite. Add without Moving keeps source files in place. Mixed folders are add-only.
+- Adding an imported chapter as a media translation opens a side-by-side page-matching sheet. Missing translated pages fall back to original media. This import currently keeps existing multilingual source files in place; automatic multi-version relocation remains pending.
+- Edit sheets expose original/localized title/description, removable searchable tag chips, NSFW, source IDs and chapter page order. Translate saves immediately. Other edits use Save; a newer revision requires reopening the editor. Page-order drag/drop changes canonical media mapping without renaming original files; other language mappings follow the new order. Saved page marks currently follow their canonical positions. Separate cover files and filename renumber plans remain release work.
+- Reader images fill the window height; Mac uses NSPageController and iPhone uses native page-style TabView. Native image zoom, PDFKit and AVKit are retained. Use keyboard/page controls, language menu, thumbnails, all-page overview, optional description and page heart/star controls. Video completes when playback ends, rather than when its single chapter page opens.
+- Connections can bind a root to a local/Finder-mounted SMB folder or direct encrypted SMB connection. Downloads support visible author/series/work groups. Completed chapter copies appear under Downloads and can be removed locally.
+- Statistics use saved active reading time and completion state. History/Saved Pages respect NSFW hiding. Finder color preferences are visible; automatic Finder tag projection is still pending.
 
 ## iPhone usage
 
-- UIKit large-title navigation and search, system back gestures, floating tab bar and continue-reading accessory follow Apple Music's structure. Tabs: Library, Continue Reading, Downloads.
-- Until identity verification completes, a full-screen UIKit welcome page shows **Sign In** and no navigation bar/tab bar. Successful sign-in reveals the native tabs; sign-out removes them and returns to welcome.
-- More menu exposes Authors/Series/Tags/Favorites/Starred/History and Settings. No edit/import/rename/move/reorg/commit/Ollama administration controls.
-- Sign in with the registered iPhone public client. Mac-imported metadata appears through automatic snapshot sync.
-- In Settings → SMB Storage Roots, connect an existing library root with `smb://host`, share, optional base folder and NAS credentials. These remain account/root-specific in Keychain. The adapter requires SMB3 encryption.
-- Root paths are relative to the selected base folder. If the Mac root is `/Volumes/share/Comics`, choose that SMB share and `Comics` as base folder on iPhone. Ensure both bindings describe the same relative hierarchy.
-- Tapping a chapter stages its chosen media from SMB into the private download directory before opening; library download buttons support chapter/work/series/author selection. This milestone is a foreground sequential downloader, not a resumable/background streaming engine.
-- Images/PDF use native `UIPageViewController` horizontal transitions. Pinch zoom images; language menu preserves numeric alignment. PDF uses one page per transition. Videos use AVPlayerViewController and system codec availability.
-- First-open/login requires online account verification in this milestone. Already signed-in sessions can read completed local downloads when NAS is unavailable. Relaunching completely offline, queued state writes and robust revocation/offline policy remain pending.
+- SwiftUI renders native large-title navigation/search, push/back transitions, floating system TabView, scroll minimization and continue-reading accessory. Tabs: Library, Continue Reading, Downloads. More contains author/series/tag/favorites/starred/saved-page/history/statistics/settings browsing.
+- There are no import, metadata edit, rename, source-file move, reorganization, commit or Ollama administration controls. Personal favorites/stars/reading progress and local download removal remain available.
+- Sign In uses the same hosted ASWeb flow; verified identity reveals tabs, and Sign Out returns to the full-screen welcome.
+- Settings → Connections binds an existing root to `smb://host`, share and optional base folder. NAS credentials stay per-account/root in Keychain, and SMB3 encryption is required. If a Mac root is `/Volumes/share/Comics`, choose the same share with `Comics` as base folder.
+- Reading/downloading stages preferred chapter media into private storage before opening; author/series/work Download All walks visible chapters. This is a foreground sequential transfer, without background resume or streaming.
+- Reader hides tabs and uses native page-style TabView transitions for images/PDF, UIScrollView image pinch/double-tap zoom, PDFView, and AVKit VideoPlayer. The top-right language menu preserves canonical alignment; missing media and missing text have independent fallbacks. Codec failures are explicit.
+- First-open/login requires online account verification. An already verified session can read completed downloads without the NAS. Completely offline relaunch and a durable offline state outbox remain pending.
 
 ## Cache and recovery
 
@@ -67,10 +68,16 @@ swift scripts/verify-mac-window.swift
 
 This opens a separate app instance, checks for an onscreen window of at least the app's minimum size, and closes only that instance. Existing Xcode/user instances remain untouched. A successful build or a running process alone does not establish that the UI appeared. This check does not initiate interactive sign-in or change configuration; any saved session follows the app's normal startup restoration behavior. It does not verify reading/NAS/sync behavior. Library/sidebar headings use the window safe area to stay below the unified toolbar; the initial content size is 1200 × 800. See Apple's [NSApplication startup documentation](https://developer.apple.com/documentation/appkit/nsapplication) and [default delegate entrypoint](https://developer.apple.com/documentation/appkit/nsapplicationdelegate/main()).
 
-`python3 scripts/verify-mac-auth-ui.py` checks actual Mac controllers in an isolated test bundle: old endpoint/audience preferences are ignored, signed-out content has no library toolbar, busy/error states remain retryable, and account changes/sign-out replace the prior UI and close readers. Synthetic identities are used only in this test harness; this is not proof of hosted login/API authentication.
+`python3 scripts/verify-mac-auth-ui.py` checks the SwiftUI root/model in an isolated test bundle: old endpoint/audience preferences are ignored, unconfigured sign-in remains retryable, account changes/sign-out dismiss old reader/editor/navigation state, and collection/search/NSFW filtering uses real fixture metadata. Synthetic identities are used only in this test harness; this is not proof of hosted login/API authentication.
 
 If code exchange succeeds but the service omits `id_token`, the app reports that the sign-in service did not return an identity token. The Manga resource policy in thristram-auth must retain `openid`, `profile`, `email` and `offline_access` alongside the Manga scopes. Provider 1.7 filters these against the resource policy too. Existing seeded policies require the auth admin's **Native sign-in resource policies → Complete native sign-in scopes** repair action; a deployment/environment change alone does not update the database row. Retry Sign In with a fresh authorization after repairing the policy. Signature, issuer, audience, nonce and API-account verification remain required.
 
 After source file additions/removals, run `python3 scripts/generate-xcode-project.py`. It regenerates the project/plists, creates missing shared schemes, preserves existing schemes and Xcode-managed signing settings, and leaves `Local.xcconfig` untouched. App source currently uses Swift 5 language mode for Apple framework compatibility; shared core uses Swift 6 with Sendable models. The compiler is Swift 6.4.
 
 See [UI spec](ui-spec.md), [Apple requirements](requirements.md), [Apple spec](spec.md), [implementation status](../implementation-status.md) and [mock](../mock/README.md).
+
+## Native visual preview
+
+[UI verification](ui-verification.md) documents page coverage, screenshots and limits. `python3 scripts/preview-native-ui.py mac` or `phone` builds an isolated preview under `.build/native-ui-preview`. It copies public build configuration, excludes local overrides, uses a separate bundle/cache and synthetic media, and does not restore a real account. Open the generated Mac app, or run the generated Xcode project with the iPhone scheme. Use a locally available simulator destination; `--destination` can override the default. Never copy preview fixture entrypoints into real targets.
+
+On iPhone, pull down at the top of a collection to reveal the native search drawer. System large-title collapse and tab minimization follow scrolling.

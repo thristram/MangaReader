@@ -21,7 +21,7 @@ def raw(v):
  return q(v)
 files=[]
 for path in sorted(APP.glob('**/*.swift')):
- if '.build' in path.parts:continue
+ if '.build' in path.relative_to(APP).parts:continue
  relative=path.relative_to(APP).as_posix();ref=obj('file:'+relative,'PBXFileReference',lastKnownFileType='sourcecode.swift',path=relative,sourceTree='<group>');files.append((relative,ref))
 config=obj('base','PBXFileReference',lastKnownFileType='text.xcconfig',path='Config/Base.xcconfig',sourceTree='<group>')
 serviceConfig=obj('service-config','PBXFileReference',lastKnownFileType='text.xcconfig',path='Config/Service.xcconfig',sourceTree='<group>')

@@ -24,19 +24,37 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
   private var refreshTask: Task<StoredCredentials, Error>?
   private var pollTask: Task<Void, Never>?
   private var epoch = UUID()
+  private let cacheRoot: URL?
+  init(cacheRoot: URL? = nil) {
+    self.cacheRoot = cacheRoot
+    super.init()
+  }
   var api: APIClient {
     let config = AppConfiguration.current()
+    let generation = epoch
+    let owner = account?.ownerId
     return APIClient(
       base: config.apiURL,
       token: { [weak self] in
         guard let self else { throw LoginError.invalidToken }
-        return try await self.accessToken()
+        return try await self.scopedAccessToken(owner: owner, generation: generation)
       })
+  }
+  private func scopedAccessToken(owner: String?, generation: UUID) async throws -> String {
+    guard owner != nil, generation == epoch, owner == account?.ownerId else {
+      throw LoginError.invalidToken
+    }
+    let token = try await accessToken()
+    guard generation == epoch, owner == account?.ownerId else { throw LoginError.invalidToken }
+    return token
   }
   var cacheDirectory: URL? {
     guard let account else { return nil }
-    return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-      .appendingPathComponent("MangaReader/accounts/" + account.ownerId, isDirectory: true)
+    let base =
+      cacheRoot
+      ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+      .appendingPathComponent("MangaReader/accounts", isDirectory: true)
+    return base.appendingPathComponent(account.ownerId, isDirectory: true)
   }
   func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
     #if os(macOS)
@@ -147,8 +165,10 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
         }
         if let error = single("error") {
           // Only a fixed public error code is logged; never the callback/code/token.
-          let known = ["access_denied", "invalid_scope", "invalid_target", "invalid_client",
-            "unauthorized_client", "invalid_request", "server_error", "temporarily_unavailable"]
+          let known = [
+            "access_denied", "invalid_scope", "invalid_target", "invalid_client",
+            "unauthorized_client", "invalid_request", "server_error", "temporarily_unavailable",
+          ]
           if known.contains(error) { NSLog("MangaReader OAuth error: %@", error) }
           let message: String
           switch error {
@@ -171,7 +191,8 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
           ])
         guard let id = tokens.id_token else {
           throw LoginError.server(
-            "The sign-in service did not return an identity token. Please check its resource scopes.")
+            "The sign-in service did not return an identity token. Please check its resource scopes."
+          )
         }
         let (jwks, response) = try await URLSession.shared.data(from: d.jwks_uri)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
@@ -201,7 +222,9 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
         webSession = nil
         if let error = error as? ASWebAuthenticationSessionError, error.code == .canceledLogin {
           status = "Sign in to your MangaReader library."
-        } else { status = error.localizedDescription }
+        } else {
+          status = error.localizedDescription
+        }
       }
       guard epoch == attempt else { return }
       busy = false

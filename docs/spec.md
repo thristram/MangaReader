@@ -4,8 +4,8 @@
 
 ```mermaid
 flowchart LR
-  Mac[Mac AppKit app] -->|Hosted ASWeb PKCE| Auth[thristram-auth]
-  Phone[iPhone UIKit app] -->|Hosted ASWeb PKCE| Auth
+  Mac[Mac SwiftUI app] -->|Hosted ASWeb PKCE| Auth[thristram-auth]
+  Phone[iPhone SwiftUI app] -->|Hosted ASWeb PKCE| Auth
   Mac -->|Access token · metadata| API[Node Express API on Vercel]
   Phone -->|Access token · metadata| API
   API --> Mongo[(MongoDB)]
@@ -76,4 +76,4 @@ NSFW inherits from direct flags, NSFW tags, author, series and work. Default lis
 
 ## Native frameworks
 
-AppKit / UIKit handle grids, sheets, navigation and system chrome. AuthenticationServices handles hosted login. PDFKit handles PDF pages; ImageIO/system decoders handle images; AVKit/AVFoundation handle supported videos; QuickLookThumbnailing supplies Mac cover/file thumbnails. AMSMB2 4.0.3 provides SMB2/3 and is linked dynamically. Full codec compatibility, gesture/zoom polish and distribution licensing checks are release acceptance tasks.
+SwiftUI handles grids, sheets, navigation and system chrome; AppKit/UIKit host the screens and own lifecycle. AuthenticationServices handles hosted login. PDFKit handles PDF pages; ImageIO/system decoders handle images; AVKit/AVFoundation handle supported videos; QuickLookThumbnailing supplies Mac cover/file thumbnails. AMSMB2 4.0.3 provides SMB2/3 and is linked dynamically. Full codec compatibility, gesture/zoom polish and distribution licensing checks are release acceptance tasks.

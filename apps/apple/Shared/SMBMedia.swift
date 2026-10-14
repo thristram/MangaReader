@@ -12,6 +12,20 @@ struct SMBConnection: Codable, Sendable {
   var password: String
   var encrypted: Bool
 }
+private final class TransferCancellation: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stopped = false
+  func cancel() {
+    lock.lock()
+    stopped = true
+    lock.unlock()
+  }
+  var isCancelled: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return stopped
+  }
+}
 @MainActor final class SMBMedia {
   let session: AppSession
   var working = false
@@ -99,6 +113,10 @@ struct SMBConnection: Codable, Sendable {
     else { throw LoginError.invalidConfiguration }
     client.timeout = 30
     try await client.connectShare(name: connection.share, encrypted: connection.encrypted)
+    guard session.account?.ownerId == owner else {
+      try? await client.disconnectShare()
+      throw LoginError.invalidToken
+    }
     let dir = try directory(media)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     var results: [URL] = []
@@ -114,8 +132,14 @@ struct SMBConnection: Codable, Sendable {
         let partial = dir.appendingPathComponent(UUID().uuidString + ".partial")
         progress?("Downloading \(index+1) of \(media.relativePaths.count)")
         do {
-          try await client.downloadItem(
-            atPath: remote, to: partial, progress: { _, _ in !Task.isCancelled })
+          let cancellation = TransferCancellation()
+          try await withTaskCancellationHandler {
+            try await client.downloadItem(
+              atPath: remote, to: partial, progress: { _, _ in !cancellation.isCancelled })
+          } onCancel: {
+            cancellation.cancel()
+          }
+          try Task.checkCancellation()
           guard session.account?.ownerId == owner else { throw LoginError.invalidToken }
           if FileManager.default.fileExists(atPath: target.path) {
             try FileManager.default.removeItem(at: target)
@@ -154,7 +178,12 @@ struct SMBConnection: Codable, Sendable {
     }
   }
   func download(_ entity: LibraryEntity) async throws {
+    let owner = session.account?.ownerId
     for chapter in chapters(for: entity) {
+      guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
+      guard session.visibleEntities(kind: .chapter).contains(where: { $0.id == chapter.id }) else {
+        continue
+      }
       guard let version = chapter.preferredMedia(AppConfiguration.preferredLanguage) else {
         continue
       }

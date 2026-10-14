@@ -94,3 +94,5 @@ Errors use `{"error":{"code":"conflict","message":"Reload current revision befor
 ## Contract compatibility
 
 Additive optional response fields are compatible. Rename/removal or semantics changes require a new API/schema version, native decoder migration and tests. Keep text localization and media version identity separate in all migrations. The generated schema covers request/response shapes; relationship/ownership rules require integration tests.
+
+SwiftUI uses the existing schema v1 `pageAlignment` array as canonical-page → source-page mapping. A null/missing/out-of-range mapping uses original media; localized title/description fields remain separate. Reading progress and page marks store canonical positions. This UI rewrite adds no endpoint or database migration.

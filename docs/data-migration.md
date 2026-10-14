@@ -64,3 +64,7 @@ Schema v1 snapshots are owner-specific. Logout hides the retained account cache 
 SMB downloads are private copies keyed by media UUID and root/path-order fingerprint. Partial files never publish a completion manifest. Changing media paths/order invalidates a manifest; this initial version does not detect changed source bytes at an unchanged path. Future download manifests need size/mtime/hash validation and explicit storage cleanup/migration.
 
 Downloads can be rebuilt from NAS; source files and metadata must be backed up independently. Mark large media directories excluded from platform backup before distribution. Public IDs/ownership never change just to reorganize filesystem paths.
+
+## SwiftUI presentation update
+
+No database or snapshot schema migration is required. Existing owner directories, root bookmarks, Keychain bindings, media IDs and revisions remain valid. Reader order/alignment uses the existing pageAlignment field; saving order does not rename files. Separate cover files and bulk filename/organization plans remain pending. Preserve account commit journals during upgrades; Pending Organization can reconcile a filesMoved_metadataPending record only when the source is absent, destination exists and metadata revision still matches.

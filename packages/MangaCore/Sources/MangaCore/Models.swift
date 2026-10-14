@@ -39,6 +39,17 @@ public struct MediaVersion: Codable, Sendable, Identifiable {
     self.pageCount = pageCount
   }
 }
+public extension MediaVersion {
+  /// Canonical page -> source page. Explicit missing entries fall back to original media.
+  func sourcePage(at canonical: Int) -> Int? {
+    guard canonical >= 0 else { return nil }
+    if let pageAlignment {
+      guard canonical < pageAlignment.count, let index = pageAlignment[canonical], index >= 0, index < pageCount else { return nil }
+      return index
+    }
+    return canonical < pageCount ? canonical : nil
+  }
+}
 public struct MetadataInput: Codable, Sendable {
   public var kind: EntityKind
   public var title: String

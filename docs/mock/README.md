@@ -10,3 +10,7 @@ The original mock uses Chinese interface labels from the earlier design rounds. 
 The mock depicts the full intended product, including unfinished screens. It is not embedded in either native app and is not an implementation readiness claim. iPhone management controls were removed in the later mock revisions; native iPhone remains a viewing/download companion.
 
 Canonical interaction/page requirements: [Apple UI spec](../apple/ui-spec.md). Actual native coverage: [implementation status](../implementation-status.md).
+
+## Native SwiftUI iteration
+
+The historical HTML design remains unchanged. [Native screenshot gallery](native/index.html) contains real rendered Mac/iPhone fixture previews of the rewritten screens. [Page coverage and verification](../apple/ui-verification.md) describes checks and remaining acceptance. Synthetic covers are clearly labeled; no personal library screenshots or credentials are stored here.
