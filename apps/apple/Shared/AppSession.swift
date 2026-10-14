@@ -169,7 +169,10 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
             "client_id": c.clientId, "redirect_uri": c.redirect.absoluteString,
             "resource": c.audience,
           ])
-        guard let id = tokens.id_token else { throw LoginError.invalidToken }
+        guard let id = tokens.id_token else {
+          throw LoginError.server(
+            "The sign-in service did not return an identity token. Please check its resource scopes.")
+        }
         let (jwks, response) = try await URLSession.shared.data(from: d.jwks_uri)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
           throw LoginError.invalidToken

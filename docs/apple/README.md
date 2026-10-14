@@ -69,6 +69,8 @@ This opens a separate app instance, checks for an onscreen window of at least th
 
 `python3 scripts/verify-mac-auth-ui.py` checks actual Mac controllers in an isolated test bundle: old endpoint/audience preferences are ignored, signed-out content has no library toolbar, busy/error states remain retryable, and account changes/sign-out replace the prior UI and close readers. Synthetic identities are used only in this test harness; this is not proof of hosted login/API authentication.
 
+If code exchange succeeds but the service omits `id_token`, the app reports that the sign-in service did not return an identity token. The Manga resource policy in thristram-auth must retain `openid`, `profile`, `email` and `offline_access` alongside the Manga scopes. Provider 1.7 filters these against the resource policy too. Existing seeded policies require the auth admin's **Native sign-in resource policies → Complete native sign-in scopes** repair action; a deployment/environment change alone does not update the database row. Retry Sign In with a fresh authorization after repairing the policy. Signature, issuer, audience, nonce and API-account verification remain required.
+
 After source file additions/removals, run `python3 scripts/generate-xcode-project.py`. It regenerates the project/plists, creates missing shared schemes, preserves existing schemes and Xcode-managed signing settings, and leaves `Local.xcconfig` untouched. App source currently uses Swift 5 language mode for Apple framework compatibility; shared core uses Swift 6 with Sendable models. The compiler is Swift 6.4.
 
 See [UI spec](ui-spec.md), [Apple requirements](requirements.md), [Apple spec](spec.md), [implementation status](../implementation-status.md) and [mock](../mock/README.md).

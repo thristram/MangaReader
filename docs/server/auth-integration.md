@@ -7,10 +7,12 @@ MangaReader is an **API resource / audience**, while the Mac and iPhone apps use
 In thristram-auth's configuration, append the permanent Manga identifier to `OAUTH_API_RESOURCES`:
 
 ```json
-[{"identifier":"https://manga-api.thenoirclub.com","allowedScopes":["manga:read","manga:state:write","manga:manage"]}]
+[{"identifier":"https://manga-api.thenoirclub.com","allowedScopes":["openid","profile","email","offline_access","manga:read","manga:state:write","manga:manage"]}]
 ```
 
 Preserve existing resources. The exact identifier must match `MANGA_API_AUDIENCE` server-side and `MangaAPIAudience` in both apps (no trailing slash). It is stable across server preview deployments.
+
+Better Auth 1.7 intersects all requested scopes with the resource allowlist, including identity scopes. If `openid` is removed, a successful exchange omits `id_token`; narrowed refresh scopes can also lose `offline_access` on rotation. Keep all four identity scopes on the resource while retaining the per-client scope allowlists below. The auth configuration normalizer includes identity scopes for new Manga resources. Existing seeded database policies require the administrator's **Native sign-in resource policies → Complete native sign-in scopes** action; deployment/environment changes alone do not overwrite them. This repair adds only missing identity scopes and preserves client grants, keys, lifetimes and other resource settings.
 
 ## Clients
 
