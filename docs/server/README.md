@@ -28,7 +28,7 @@ The migration creates compound unique `(ownerId,id)` indexes for entities and st
 ## Vercel setup
 
 - Import this monorepo; choose Root Directory **`apps/server`**.
-- Use Vercel's native Express detection (default export in `src/index.ts`). No Edge runtime or hand-written legacy function wrapper. Keep the injectable app factory in `src/create-app.ts`; a file named `src/app.ts` is also a reserved Express entrypoint and can take precedence over `src/index.ts`.
+- Use Vercel's native Express detection. `src/index.ts` must directly import `express`, create the app, and default-export the configured instance; importing only our factory does not satisfy detection. Keep the injectable app factory in `src/create-app.ts`; a file named `src/app.ts` is also a reserved Express entrypoint and can take precedence over `src/index.ts`.
 - Set server environment values for Preview/Production. Build/install respects the root workspace lockfile. `npm run build` validates TypeScript; Express detection provides runtime packaging.
 - Use a stable production API resource; rotating preview URLs need not change the token audience. Configure issuer's per-client allowed resources and scopes.
 - Mongo connection must be reachable from Vercel with TLS/auth appropriate to the deployment. NAS credentials and comic files never enter Vercel.
@@ -46,6 +46,15 @@ npm run contract:generate
 ```
 
 `npm test` covers tenant CRUD/reference/state/snapshot isolation, management permissions, stale revisions, tombstones, NSFW inheritance, text/media separation and real signed-token verification (wrong signature/issuer/audience/expiry). To run the Mongo integration test, use a dedicated temporary Mongo server and set `MONGODB_TEST_URI`; the test creates a random `mangareader_test_*` database and drops **only that test database**.
+
+For deployment changes, also run the published Vercel Express builder from repository root. TypeScript compilation alone does not check framework detection or the packaged handler. This optional tooling stays in ignored `.build/`; it is not an application dependency.
+
+```sh
+npm install --prefix .build/vercel-builder --no-audit --no-fund @vercel/express@19.0.0
+node scripts/verify-vercel-build.mjs
+```
+
+The check reuses installed workspace dependencies, selects the entrypoint with the real builder, packages a Node.js 24 function, and invokes the packaged app's public health/auth boundaries. It uses synthetic public auth configuration, does not connect to MongoDB, and checks that no `.env` files enter the bundle. The runtime smoke check uses the Node executable running this script (reported as `verificationNode`); use Node.js 24 to match the deployed runtime. It does not deploy, verify hosted login, or prove production MongoDB connectivity.
 
 ```sh
 MONGODB_TEST_URI=mongodb://127.0.0.1:27383 npm test

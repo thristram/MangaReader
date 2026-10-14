@@ -26,8 +26,8 @@ const revision = (value: unknown) => {
 export function createApp(
   repository: () => Promise<Repository>,
   verify: Verifier,
+  app: express.Express = express(),
 ) {
-  const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "2mb" }));
   app.use((_req, res, next) => {

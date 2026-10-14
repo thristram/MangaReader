@@ -38,3 +38,15 @@ The documented root command initially forwarded `--apply` to npm's workspace run
 The corrected command was applied to the configured `mangareader` database after the user explicitly attempted the apply command. It returned `Schema v1 applied.` A direct read-only follow-up confirmed the v1 marker and both unique `(ownerId,id)` indexes. Entity/state counts remain zero. No comic/user records were inserted or deleted; no credentials were printed or committed. Dry-run behavior was also checked with an intentionally invalid URI and returned without attempting a connection.
 
 This completes metadata-database initialization using the local configuration. It does not establish production-runtime DB connectivity or authenticated API CRUD; those still require the corrected deployment and a real account login.
+
+## Follow-up — direct Express import and real builder verification
+
+The deployment of `2be418b` failed with `No entrypoint found which imports express. Found possible entrypoint: src/index.ts`. Renaming the factory resolved the competing entrypoint but did not satisfy the builder's direct-import requirement. The previous bootstrap test verified the exported app and filenames, not this detection requirement.
+
+`src/index.ts` now directly imports Express and creates the instance passed into the app factory. The factory still supports dependency injection and its existing test callers. The entrypoint test also requires a runtime Express import.
+
+The published `@vercel/express@19.0.0` builder (using `@vercel/node@24.0.0`) reproduced the original detection error against the entrypoint from `2be418b`. With the fix, it selected `src/index.ts`, completed TypeScript compilation/tracing, and produced `apps/server/src/index.js` with runtime `nodejs24.x`. Invoking the generated package under Node.js **24.21.0** returned 200 for `/health` and 401 for `/v1/me` without a bearer token. The bundle contains no `.env` files. This verification used existing workspace dependencies and synthetic auth configuration, without database access. See `scripts/verify-vercel-build.mjs` and the server README for reproducible commands.
+
+Backend regression results: 9 tests passed, 0 failed; the dedicated Mongo integration test was skipped because no temporary Mongo test URI was configured. TypeScript build and formatting checks passed.
+
+These are local builder/package checks, not evidence of a successful hosted deployment. Production invocation, real account login and production database access still need verification after the fix is pushed and deployed.
