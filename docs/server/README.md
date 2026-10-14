@@ -26,7 +26,7 @@ The migration creates compound unique `(ownerId,id)` indexes for entities and st
 ## Vercel setup
 
 - Import this monorepo; choose Root Directory **`apps/server`**.
-- Use Vercel's native Express detection (default export in `src/index.ts`). No Edge runtime or hand-written legacy function wrapper.
+- Use Vercel's native Express detection (default export in `src/index.ts`). No Edge runtime or hand-written legacy function wrapper. Keep the injectable app factory in `src/create-app.ts`; a file named `src/app.ts` is also a reserved Express entrypoint and can take precedence over `src/index.ts`.
 - Set server environment values for Preview/Production. Build/install respects the root workspace lockfile. `npm run build` validates TypeScript; Express detection provides runtime packaging.
 - Use a stable production API resource; rotating preview URLs need not change the token audience. Configure issuer's per-client allowed resources and scopes.
 - Mongo connection must be reachable from Vercel with TLS/auth appropriate to the deployment. NAS credentials and comic files never enter Vercel.
@@ -58,3 +58,5 @@ API responses use `Cache-Control: no-store`. Error logs intentionally avoid toke
 See [server specification](spec.md), [requirements](requirements.md), [auth integration](auth-integration.md) and [API contract](../api-contract.md).
 
 References: [Vercel Express](https://vercel.com/docs/frameworks/backend/express), [Better Auth OAuth Provider](https://better-auth.com/docs/plugins/oauth-provider), [MongoDB Node driver](https://www.mongodb.com/docs/drivers/node/current/).
+
+Latest live check: [deployment verification — 2026-10-13](deployment-verification-2026-10-13.md), including the reserved-entrypoint correction and database readiness findings.

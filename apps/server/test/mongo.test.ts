@@ -4,7 +4,7 @@ import { MongoClient } from "mongodb";
 import { randomUUID } from "node:crypto";
 import request from "supertest";
 import { MongoRepository } from "../src/repository.js";
-import { createApp } from "../src/app.js";
+import { createApp } from "../src/create-app.js";
 test(
   "MongoDB persistence, unique account indexes, CAS and account isolation",
   { skip: !process.env.MONGODB_TEST_URI },

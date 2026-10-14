@@ -1,4 +1,4 @@
-import { createApp } from "./app.js";
+import { createApp } from "./create-app.js";
 import { createVerifier } from "./auth.js";
 import { Problem } from "./domain.js";
 import { database, MongoRepository } from "./repository.js";
