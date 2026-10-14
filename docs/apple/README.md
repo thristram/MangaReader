@@ -6,7 +6,7 @@ The two app targets are native: `MangaReaderMac` uses AppKit, `MangaReaderiPhone
 
 1. Install Xcode with iOS/macOS 26+ SDKs (validated with Xcode 27.0 / Swift 6.4).
 2. Deployment URLs/resource live in `apps/apple/Config/Service.xcconfig`; the default API is `https://manga-api.thenoirclub.com` and issuer is `https://auth.thenoirclub.com/api/auth`. The supplied public client ID is already in `Base.xcconfig` for both targets. If using different registrations, copy `Local.xcconfig.example` to `Local.xcconfig` and replace both placeholder IDs. Do not leave sample placeholders in an included local file. `$()` between URL slashes avoids xcconfig comment parsing.
-3. Open `apps/apple/MangaReader.xcodeproj`. Shared schemes are checked in. Swift Package Manager resolves MangaCore locally and dynamic AMSMB2 **4.0.3** remotely; resolved versions are checked in.
+3. Open `apps/apple/MangaReader.xcodeproj`. Shared schemes are checked in. Swift Package Manager resolves MangaCore locally and dynamic AMSMB2 **4.0.3** remotely; resolved versions are checked in. Both app targets link AMSMB2 and use an **Embed Frameworks** copy phase with **Code Sign on Copy**. Keep this phase: linking the dynamic package alone does not package it for distribution/device launch.
 4. Select Mac or iPhone scheme and destination. Set your Development Team for signed/device builds. Mac sandbox entitlements permit selected read/write files, persistent bookmarks and network client access. iPhone requests local-network access for NAS connections.
 5. Register the matching exact callback in thristram-auth; [auth guide](../server/auth-integration.md).
 
@@ -43,6 +43,18 @@ Before a file move, `commit-journals/<id>.json` records paths/phase and `<id>-me
 ## Build and tests
 
 Root README lists exact unsigned build commands. `swift test --package-path packages/MangaCore` validates path/folder policy and OIDC behavior. Signed NAS/auth/device flows need actual user configuration; compiling does not certify live sign-in, hardware gestures or NAS compatibility.
+
+Check the built application itself, including the Debug dylib's framework references, architectures and nested signatures:
+
+```sh
+python3 scripts/verify-apple-frameworks.py /path/to/MangaReaderiPhone.app
+# For an intentionally unsigned build, check packaging only:
+python3 scripts/verify-apple-frameworks.py .build/xcode-mac/Build/Products/Debug/MangaReaderMac.app --allow-unsigned
+```
+
+`AMSMB2.framework` belongs in `Frameworks/` on iPhone and `Contents/Frameworks/` on Mac. Xcode signs the embedded copy with the app's configured identity. Do not disable library validation or manually sign a `PackageFrameworks` build-cache copy to fix a launch failure; that copy is outside the installed app. Apple's [framework embedding guidance](https://developer.apple.com/library/archive/technotes/tn2435/_index.html) describes the required embedding and Code Sign on Copy settings.
+
+If upgrading from a build that failed with `Library not loaded: @rpath/AMSMB2.framework/AMSMB2`, stop the old run, select **Product → Clean Build Folder**, and build/run again. Keep the existing Development Team selected for device or **My Mac (Designed for iPad)** runs. `CODE_SIGNING_ALLOWED=NO` is only for compilation/packaging checks, not a device-run configuration. The verification script reads a completed build; it neither signs nor modifies the app, and packaging checks alone do not certify SMB access.
 
 Mac startup is entirely programmatic. `MangaReaderMacApp.main()` creates `NSApplication`, attaches a `MacAppDelegate` and retains it while the event loop runs. There is no main nib/storyboard to instantiate the delegate. Do not replace this entrypoint with only `@main` on the delegate: the default AppKit entrypoint would run without installing our delegate, so no library window would be created.
 

@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		2105C117BA2DC2F264ECA6A4 /* AMSMB2 in Embed Frameworks */ = {isa = PBXBuildFile; productRef = A4A0E864F82AC7CFFC2EF5BB /* AMSMB2 */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		9AB78D90E65F5CCBB6755DE8 /* AMSMB2 in Embed Frameworks */ = {isa = PBXBuildFile; productRef = B60A18169D85C9FC710B8BB9 /* AMSMB2 */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		08295E8C2EF2DB0A14E795C9 /* Shared/LocalMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C25324C8E4FB93D5B344408 /* Shared/LocalMedia.swift */; };
 		085B42DE8F05A1A233674586 /* MangaCore in Frameworks */ = {isa = PBXBuildFile; productRef = D6DA7D65DD6D6F2A07AAAA04 /* MangaCore */; };
 		20C6A619565FA4A7A61C0208 /* Shared/AppSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3F4E539C47BF0F4F306B2E2 /* Shared/AppSession.swift */; };
@@ -34,6 +36,31 @@
 		E9CB29DAC0A1E78A31AA0D9E /* Mac/ReaderController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16BBDE534187D60FD41C60E /* Mac/ReaderController.swift */; };
 		F677CEC1C316B3AC1A97E6E0 /* iPhone/RootController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCAB3E26BD022249895FF435 /* iPhone/RootController.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		17255BD31A53A3ED64C73A9F /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				2105C117BA2DC2F264ECA6A4 /* AMSMB2 in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BC098D3B55141C298C2F146A /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				9AB78D90E65F5CCBB6755DE8 /* AMSMB2 in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		1405DF66CBE219B0BF6355BC /* Config/Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Base.xcconfig; sourceTree = "<group>"; };
@@ -126,6 +153,7 @@
 				550AE692F8E3FD75C954291B /* Sources */,
 				92DA557B818076F2F4885953 /* Frameworks */,
 				B7A2EF6FBC2B5FD406E24820 /* Resources */,
+				BC098D3B55141C298C2F146A /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -147,6 +175,7 @@
 				F5717EB8D1C49DA8077FCC6B /* Sources */,
 				D05955A8F3FBE2F564D53395 /* Frameworks */,
 				1B0B2A22B00D3E73A1FF0F41 /* Resources */,
+				17255BD31A53A3ED64C73A9F /* Embed Frameworks */,
 			);
 			buildRules = (
 			);

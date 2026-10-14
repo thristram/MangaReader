@@ -35,6 +35,10 @@ for name,folder,sdk,bundle in [('MangaReaderMac','Mac','macosx','com.thristram.m
  deps=[obj('core-dep:'+name,'XCSwiftPackageProductDependency',package=local,productName='MangaCore'),obj('smb-dep:'+name,'XCSwiftPackageProductDependency',package=smb,productName='AMSMB2')]
  frameworkFiles=[obj('framework:'+name+':'+d,'PBXBuildFile',productRef=d) for d in deps]
  frameworks=obj('frameworks:'+name,'PBXFrameworksBuildPhase',buildActionMask='2147483647',files=frameworkFiles,runOnlyForDeploymentPostprocessing='0')
+ # AMSMB2 declares a dynamic product. Linking alone leaves it outside the app;
+ # Xcode must copy it to the platform's Frameworks directory and sign that copy.
+ embeddedSMB=obj('embed-framework:'+name,'PBXBuildFile',productRef=deps[1],settings={'ATTRIBUTES':['CodeSignOnCopy','RemoveHeadersOnCopy']})
+ embedFrameworks=obj('embed-frameworks:'+name,'PBXCopyFilesBuildPhase',buildActionMask='2147483647',dstPath='',dstSubfolderSpec='10',files=[embeddedSMB],name='Embed Frameworks',runOnlyForDeploymentPostprocessing='0')
  resources=obj('resources:'+name,'PBXResourcesBuildPhase',buildActionMask='2147483647',files=[],runOnlyForDeploymentPostprocessing='0')
  configs=[]
  for mode in ['Debug','Release']:
@@ -45,7 +49,7 @@ for name,folder,sdk,bundle in [('MangaReaderMac','Mac','macosx','com.thristram.m
   settings={**settings,**existing_settings.get(uid('config:'+name+mode),{})}
   configs.append(obj('config:'+name+mode,'XCBuildConfiguration',baseConfigurationReference=config,buildSettings=settings,name=mode))
  configList=obj('config-list:'+name,'XCConfigurationList',buildConfigurations=configs,defaultConfigurationIsVisible='0',defaultConfigurationName='Debug')
- target=obj('target:'+name,'PBXNativeTarget',buildConfigurationList=configList,buildPhases=[sourcePhase,frameworks,resources],buildRules=[],dependencies=[],name=name,packageProductDependencies=deps,productName=name,productReference=product,productType='com.apple.product-type.application');targets.append(target)
+ target=obj('target:'+name,'PBXNativeTarget',buildConfigurationList=configList,buildPhases=[sourcePhase,frameworks,resources,embedFrameworks],buildRules=[],dependencies=[],name=name,packageProductDependencies=deps,productName=name,productReference=product,productType='com.apple.product-type.application');targets.append(target)
  info={'CFBundleDevelopmentRegion':'en','CFBundleExecutable':'$(EXECUTABLE_NAME)','CFBundleIdentifier':'$(PRODUCT_BUNDLE_IDENTIFIER)','CFBundleName':'MangaReader','CFBundlePackageType':'APPL','CFBundleShortVersionString':'$(MARKETING_VERSION)','CFBundleVersion':'$(CURRENT_PROJECT_VERSION)','MangaAPIURL':'$(MANGA_API_URL)','AuthIssuer':'$(AUTH_ISSUER)','MangaAPIAudience':'$(MANGA_API_AUDIENCE)','OAuthClientID':'$(MAC_OAUTH_CLIENT_ID)' if folder=='Mac' else '$(IPHONE_OAUTH_CLIENT_ID)','CFBundleURLTypes':[{'CFBundleURLName':bundle,'CFBundleURLSchemes':[bundle]}],'NSLocalNetworkUsageDescription':'MangaReader connects directly to your NAS to read and download your manga.','NSAppTransportSecurity':{'NSAllowsLocalNetworking':True}}
  if folder=='Mac':info.update({'NSPrincipalClass':'NSApplication','LSMinimumSystemVersion':'$(MACOSX_DEPLOYMENT_TARGET)'})
  else:info.update({'UIApplicationSceneManifest':{'UIApplicationSupportsMultipleScenes':False,'UISceneConfigurations':{'UIWindowSceneSessionRoleApplication':[{'UISceneConfigurationName':'Default','UISceneDelegateClassName':'$(PRODUCT_MODULE_NAME).PhoneSceneDelegate'}]}},'UILaunchScreen':{},'UIRequiredDeviceCapabilities':['arm64'],'UISupportedInterfaceOrientations':['UIInterfaceOrientationPortrait','UIInterfaceOrientationLandscapeLeft','UIInterfaceOrientationLandscapeRight']})
