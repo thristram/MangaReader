@@ -1,6 +1,18 @@
 import AppKit
 
-@main @MainActor final class MacAppDelegate: NSObject, NSApplicationDelegate {
+@main @MainActor enum MangaReaderMacApp {
+  static func main() {
+    let application = NSApplication.shared
+    let delegate = MacAppDelegate()
+    application.delegate = delegate
+    // This app has no main nib/storyboard to instantiate and retain its delegate.
+    withExtendedLifetime(delegate) {
+      application.run()
+    }
+  }
+}
+
+@MainActor final class MacAppDelegate: NSObject, NSApplicationDelegate {
   var window: NSWindow!
   let session = AppSession()
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -31,10 +43,12 @@ import AppKit
       styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
       backing: .buffered, defer: false)
     window.title = "MangaReader"
+    window.titleVisibility = .hidden
     window.minSize = NSSize(width: 760, height: 560)
     window.titlebarAppearsTransparent = true
     window.toolbarStyle = .unified
     window.contentViewController = MacLibraryController(session: session)
+    window.setContentSize(NSSize(width: 1200, height: 800))
     window.center()
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)

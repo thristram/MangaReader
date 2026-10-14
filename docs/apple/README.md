@@ -43,6 +43,17 @@ Before a file move, `commit-journals/<id>.json` records paths/phase and `<id>-me
 
 Root README lists exact unsigned build commands. `swift test --package-path packages/MangaCore` validates path/folder policy and OIDC behavior. Signed NAS/auth/device flows need actual user configuration; compiling does not certify live sign-in, hardware gestures or NAS compatibility.
 
+Mac startup is entirely programmatic. `MangaReaderMacApp.main()` creates `NSApplication`, attaches a `MacAppDelegate` and retains it while the event loop runs. There is no main nib/storyboard to instantiate the delegate. Do not replace this entrypoint with only `@main` on the delegate: the default AppKit entrypoint would run without installing our delegate, so no library window would be created.
+
+After building the Mac target, verify a real visible main window from repository root:
+
+```sh
+swift scripts/verify-mac-window.swift
+# Or pass another built MangaReaderMac.app path as the first argument.
+```
+
+This opens a separate app instance, checks for an onscreen window of at least the app's minimum size, and closes only that instance. Existing Xcode/user instances remain untouched. A successful build or a running process alone does not establish that the UI appeared. This check does not initiate interactive sign-in or change configuration; any saved session follows the app's normal startup restoration behavior. It does not verify reading/NAS/sync behavior. Library/sidebar headings use the window safe area to stay below the unified toolbar; the initial content size is 1200 × 800. See Apple's [NSApplication startup documentation](https://developer.apple.com/documentation/appkit/nsapplication) and [default delegate entrypoint](https://developer.apple.com/documentation/appkit/nsapplicationdelegate/main()).
+
 After source file additions/removals, run `python3 scripts/generate-xcode-project.py`. It regenerates shared schemes/project/plists but leaves `Local.xcconfig` untouched. App source currently uses Swift 5 language mode for Apple framework compatibility; shared core uses Swift 6 with Sendable models. The compiler is Swift 6.4.
 
 See [UI spec](ui-spec.md), [Apple requirements](requirements.md), [Apple spec](spec.md), [implementation status](../implementation-status.md) and [mock](../mock/README.md).

@@ -112,7 +112,7 @@ final class MacLibraryController: NSSplitViewController, NSToolbarDelegate,
     sidebar.view.addSubview(stack)
     stack.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      stack.topAnchor.constraint(equalTo: sidebar.view.topAnchor),
+      stack.topAnchor.constraint(equalTo: sidebar.view.safeAreaLayoutGuide.topAnchor),
       stack.leadingAnchor.constraint(equalTo: sidebar.view.leadingAnchor),
       stack.trailingAnchor.constraint(equalTo: sidebar.view.trailingAnchor),
     ])
@@ -159,7 +159,7 @@ final class MacLibraryController: NSSplitViewController, NSToolbarDelegate,
       v.translatesAutoresizingMaskIntoConstraints = false
     }
     NSLayoutConstraint.activate([
-      heading.topAnchor.constraint(equalTo: content.view.topAnchor, constant: 20),
+      heading.topAnchor.constraint(equalTo: content.view.safeAreaLayoutGuide.topAnchor, constant: 20),
       heading.leadingAnchor.constraint(equalTo: content.view.leadingAnchor, constant: 24),
       search.trailingAnchor.constraint(equalTo: content.view.trailingAnchor, constant: -24),
       search.centerYAnchor.constraint(equalTo: heading.centerYAnchor),
