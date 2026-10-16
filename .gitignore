@@ -27,6 +27,7 @@ coverage/
 *.log
 npm-debug.log*
 .DS_Store
+__pycache__/
 
 # Local private keys and signing material. Public certificates can be added explicitly.
 *.key

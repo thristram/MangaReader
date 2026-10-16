@@ -32,20 +32,59 @@ struct MangaRootScreen: View {
     .environmentObject(library).environmentObject(session).tint(.pink)
     .onChange(of: session.account?.ownerId) { _, _ in library.reset() }
     .onChange(of: showNSFW) { _, _ in library.visibilityChanged() }
-    .onChange(of: session.entities.map { $0.id + ":" + String($0.revision) }) { _, _ in
+    .onChange(of: session.metadataGeneration) { _, _ in
       library.visibilityChanged()
     }
     .sheet(item: $library.editor) {
       MetadataEditor(request: $0).environmentObject(library).environmentObject(session)
     }
     .alert(
-      "MangaReader",
+      library.deletionRequest == nil
+        ? "MangaReader"
+        : (library.deletionRequest?.kind == .author
+          ? "Delete Author?"
+          : library.deletionRequest?.kind == .chapter ? "Delete Chapter?" : "Delete Comic?"),
       isPresented: Binding(
-        get: { library.message != nil }, set: { if !$0 { library.message = nil } })
+        get: { library.message != nil || library.deletionRequest != nil },
+        set: {
+          if !$0 {
+            library.message = nil
+            library.deletionRequest = nil
+          }
+        })
     ) {
-      Button("OK", role: .cancel) { library.message = nil }
+      if library.deletionRequest != nil {
+        Button("Cancel", role: .cancel) { library.deletionRequest = nil }
+        Button(
+          library.deletionRequest?.kind == .author
+            ? "Delete Author"
+            : library.deletionRequest?.kind == .chapter ? "Delete Chapter" : "Delete Comic",
+          role: .destructive
+        ) { library.confirmDeletion() }
+      } else {
+        Button("OK", role: .cancel) { library.message = nil }
+      }
     } message: {
-      Text(library.message?.text ?? "")
+      if let comic = library.deletionRequest, comic.kind == .author {
+        Text(
+          "Delete “" + library.title(comic)
+            + "”? Their series, comics and chapters will be assigned to other author. Media files stay at their current paths; descriptions, page order and reading state are kept. If interrupted, retry to finish reassigning the remaining items."
+        )
+      } else if let comic = library.deletionRequest {
+        Text(
+          "Delete “" + library.title(comic)
+            + "”" + (comic.kind == .work ? " and its chapters? " : "? ")
+            + "Comics kept in place will only be removed from the library; their original files stay. Archived files will move to the library’s Recycle folder. Files used by other comics are kept."
+        )
+      } else {
+        Text(library.message?.text ?? "")
+      }
+    }
+    .overlay(alignment: .bottom) {
+      if library.deletingComic {
+        ProgressView("Updating library…").padding(14).background(.regularMaterial, in: Capsule())
+          .padding()
+      }
     }
   }
 }
@@ -148,7 +187,15 @@ struct WelcomeScreen: View {
     }
     private func sidebarRow(_ page: LibraryPage) -> some View {
       Label {
-        Text(page.title)
+        HStack {
+          Text(page.title)
+          if page == .downloads && library.activeDownloadCount > 0 {
+            Spacer()
+            Text("\(library.activeDownloadCount)").font(.caption.bold()).monospacedDigit()
+              .padding(.horizontal, 7).padding(.vertical, 2).background(
+                .pink.opacity(0.15), in: Capsule())
+          }
+        }
       } icon: {
         Image(systemName: page.symbol).font(.system(size: 19)).frame(width: 25)
       }
@@ -172,11 +219,17 @@ struct WelcomeScreen: View {
         Tab("Library", systemImage: "books.vertical", value: .library) {
           PhonePageStack(page: .library)
         }
-        Tab("Continue Reading", systemImage: "book", value: .continuing) {
+        Tab("Reading", systemImage: "book", value: .continuing) {
           PhonePageStack(page: .continuing)
         }
-        Tab("Downloads", systemImage: "arrow.down.circle", value: .downloads) {
+        Tab("Offline", systemImage: "arrow.down.circle", value: .downloads) {
           PhonePageStack(page: .downloads)
+        }.badge(library.activeDownloadCount)
+        Tab("Saved", systemImage: "photo.on.rectangle", value: .savedPages) {
+          PhonePageStack(page: .savedPages)
+        }
+        Tab("Authors", systemImage: "person.crop.circle", value: .authors) {
+          PhonePageStack(page: .authors)
         }
       }
       .tabBarMinimizeBehavior(.onScrollDown)
@@ -226,7 +279,7 @@ struct WelcomeScreen: View {
             ToolbarItem(placement: .topBarTrailing) {
               Menu("More", systemImage: "ellipsis") {
                 ForEach([
-                  LibraryPage.authors, .series, .tags, .favorites, .starred, .savedPages, .history,
+                  LibraryPage.series, .tags, .favorites, .history,
                   .statistics, .settings,
                 ]) { page in
                   NavigationLink(value: LibraryRoute.page(page)) {
@@ -275,9 +328,11 @@ struct LibraryPageScreen: View {
         content
       #endif
     }
-    .navigationTitle(page.title)
     #if os(iOS)
+      .navigationTitle(page == .savedPages ? "Saved" : page.title)
       .toolbarTitleDisplayMode(.large)
+    #else
+      .navigationTitle(page.title)
     #endif
     .accessibilityIdentifier("page-" + page.rawValue)
   }
@@ -287,7 +342,12 @@ struct LibraryPageScreen: View {
       case .authors: AuthorsScreen()
       case .tags: TagsScreen()
       case .statistics: StatisticsScreen()
-      case .savedPages: SavedPagesScreen()
+      case .savedPages:
+        #if os(iOS)
+          PhoneSavedCollectionScreen()
+        #else
+          SavedPagesScreen()
+        #endif
       case .downloads: DownloadsScreen()
       case .settings, .reading, .translation, .connections, .sync, .files, .storage:
         LibrarySettingsScreen(page: page)

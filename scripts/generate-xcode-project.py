@@ -26,7 +26,7 @@ for path in sorted(APP.glob('**/*.swift')):
 config=obj('base','PBXFileReference',lastKnownFileType='text.xcconfig',path='Config/Base.xcconfig',sourceTree='<group>')
 serviceConfig=obj('service-config','PBXFileReference',lastKnownFileType='text.xcconfig',path='Config/Service.xcconfig',sourceTree='<group>')
 local=obj('core-package','XCLocalSwiftPackageReference',relativePath='../../packages/MangaCore')
-smb=obj('smb-package','XCRemoteSwiftPackageReference',repositoryURL='https://github.com/amosavian/AMSMB2',requirement={'kind':'exactVersion','version':'4.0.3'})
+smb=obj('smb-package','XCLocalSwiftPackageReference',relativePath='../../packages/AMSMB2')
 targets=[];products=[]
 for name,folder,sdk,bundle in [('MangaReaderMac','Mac','macosx','com.thristram.mangareader.mac'),('MangaReaderiPhone','iPhone','iphoneos','com.thristram.mangareader.iphone')]:
  product=obj('product:'+name,'PBXFileReference',explicitFileType='wrapper.application',path=name+'.app',sourceTree='BUILT_PRODUCTS_DIR');products.append(product)

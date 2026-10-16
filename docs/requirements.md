@@ -41,12 +41,15 @@ No online comic scraping, extension marketplace, hosted media upload or shared p
 | IMP-02 | Multiple folders are processed one chapter at a time with visible queue position. Thumbnails dominate the result. Avoid duplicate commit on retry. |
 | IMP-03 | Author input searches existing authors, allows creation in a popup and defaults unknown author appropriately. Enter chapter description. |
 | IMP-04 | Optional input named Comic searches existing comics and includes Create Comic. Creation can attach the comic to a series. |
-| IMP-05 | A candidate can be attached as another media translation of an existing chapter. A popup aligns pages / order with that chapter; unmapped pages fall back safely. |
+| IMP-05 | A toggle above Chapter Name enables media translation mode. Choose the original chapter; hide normal metadata fields, retaining media language and chapter description. A popup aligns pages / order; unmapped pages fall back safely. Save the entered description in the media language without replacing original text or duplicating the chapter. |
 | IMP-06 | Chapter source inputs accept Pixiv ID, Fanbox post ID and e-hentai gallery ID/token or URL. An e-hentai ID alone can be saved but cannot always reconstruct a usable gallery URL. |
 | IMP-07 | Default primary action is Add to Library & Move Files; secondary is add without moving. Preview resulting organization before commit. |
+| IMP-08 | A leading ASCII numeric ID followed by `_`, or an entirely numeric import name, pre-fills Pixiv ID and is removed from Chapter Name. Preserve the remaining title, including later underscores. An empty title requires a user-entered name for a normal chapter; a translation uses its selected original chapter. |
+| IMP-09 | Retain source access from drop/picker through queued work and failed-job retry. Closing the import UI must not revoke a queued job's access or require reimporting it. Capture source bookmarks before asynchronous metadata operations; do not recreate them for each commit/retry. |
 | EDT-01 | Preview-like drag reordering updates reading order. File renaming/renumbering remains a separate staged commit. PDF original page order remains intact unless explicitly exporting a new file. |
 | EDT-02 | Auto cover is the lowest-numbered image. Choose a page or separate cover. Written cover defaults to `0.ext`; conflicts are reviewed before writing. |
 | EDT-03 | A pencil icon beside each chapter/comic title opens an edit popup; no standalone chapter-language administration page. |
+| EDT-04 | Mac Edit Chapter → Chapter Content offers a language dropdown for each existing media version. Selecting a different language opens a commit review. Commit updates the media language and renames its existing language directory; Cancel changes neither. Reject duplicate languages and destination collisions. Preserve media ID, reading order/progress, original media and text localizations. A single version retains its language-free directory. |
 
 ## Metadata, tags and translations
 
@@ -66,7 +69,7 @@ No online comic scraping, extension marketplace, hosted media upload or shared p
 
 | ID | Requirement / acceptance |
 | --- | --- |
-| READ-01 | Image fills reading viewport top to bottom by default, preserving aspect ratio; controls overlay rather than reserve a persistent description pane. No intentional top/bottom padding. Wider images support pan. |
+| READ-01 | The media canvas reaches the window/screen edges; controls overlay rather than reserve a persistent description pane. On iPhone, minimum/default image and PDF zoom fits the entire page without cropping, including wide spreads and long strips; aspect-ratio letterboxing is allowed. Pinch/double-tap may enlarge and pan. No extra safe-area band above the canvas. Mac retains its height-fit default. |
 | READ-02 | Native Photos-like left/right paging for images and PDF. Pinch zoom, fullscreen/window, automatic resize, fit width/fit window/original size. When zoomed, pan takes priority. |
 | READ-03 | Optional Preview-style thumbnails and a chapter's all-pages grid; selecting a thumbnail opens that page. |
 | READ-04 | Reader top-right language button switches media version and keeps aligned page. No language controls on library/detail thumbnails. |

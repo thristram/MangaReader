@@ -1,5 +1,4 @@
 import AVKit
-import ImageIO
 import MangaCore
 import PDFKit
 import SwiftUI
@@ -13,22 +12,22 @@ struct MangaReaderScreen: View {
   @AppStorage("ReaderDescription") private var showDescription = false
   @AppStorage("ReaderDirection") private var direction = "ltr"
   @State private var version: MediaVersion
-  @State private var urls: [URL]
-  @State private var originalURLs: [URL] = []
   @State private var page: Int
   @State private var controls = true
   @State private var thumbnails = false
   @State private var overview = false
-  @State private var switching = false
+  @State private var chapterInfo = false
   @State private var started = Date()
   @State private var activeSeconds = 0
   @State private var videoCompleted = false
   @State private var isActive = true
   @State private var pageAspect: CGFloat = 0.7
+  #if os(macOS)
+    @StateObject private var playback = ReaderVideoPlayback()
+  #endif
   init(context: ReadingContext) {
     self.context = context
     _version = State(initialValue: context.version)
-    _urls = State(initialValue: context.urls)
     _page = State(initialValue: context.page)
   }
   private var chapter: LibraryEntity { library.entity(context.chapter.id) ?? context.chapter }
@@ -40,91 +39,106 @@ struct MangaReaderScreen: View {
     max(original.pageCount, version.pageAlignment?.count ?? version.pageCount)
   }
   var body: some View {
-    GeometryReader { geometry in
-      let descriptionOnRight =
-        geometry.size.width >= 950
-        && pageAspect * geometry.size.height + 235 + (thumbnails ? 110 : 0) <= geometry.size.width
-      HStack(spacing: 0) {
-        if thumbnails {
-          ScrollView {
-            LazyVStack(spacing: 14) {
-              ForEach(0..<count, id: \.self) { index in
-                Button {
-                  page = index
-                } label: {
-                  PagePreview(
-                    url: resolved(index).url, kind: resolved(index).kind,
-                    index: resolved(index).index
-                  ).frame(width: 82, height: 112).overlay(
-                    RoundedRectangle(cornerRadius: 5).stroke(
-                      index == page ? Color.pink : .clear, lineWidth: 3))
-                }.buttonStyle(.plain)
-                Text("\(index + 1)").font(.caption).foregroundStyle(.secondary)
-              }
-            }.padding(.vertical, 70).padding(.horizontal, 10)
-          }.frame(width: 110).background(.black.opacity(0.8))
-        }
-        VStack(spacing: 0) {
-          ZStack {
-            Color.black
-            #if os(iOS)
-              TabView(selection: $page) {
-                ForEach(0..<count, id: \.self) { index in canvas(index).tag(index) }
-              }.tabViewStyle(.page(indexDisplayMode: .never))
-                .environment(\.layoutDirection, direction == "rtl" ? .rightToLeft : .leftToRight)
-            #else
-              MacReaderPager(index: $page, count: count, rightToLeft: direction == "rtl") { index in
-                AnyView(
-                  canvas(index).frame(maxWidth: .infinity, maxHeight: .infinity).background(.black)
-                    .foregroundStyle(.white))
-              }
-              .focusable().onMoveCommand { move in
-                if move == .left {
-                  advance(direction == "rtl" ? 1 : -1)
-                } else if move == .right {
-                  advance(direction == "rtl" ? -1 : 1)
+    // Measure control insets before expanding the media canvas under system bars.
+    GeometryReader { safeGeometry in
+      GeometryReader { geometry in
+        let descriptionOnRight =
+          geometry.size.width >= 950
+          && pageAspect * geometry.size.height + 235 + (thumbnails ? 110 : 0) <= geometry.size.width
+        HStack(spacing: 0) {
+          if thumbnails {
+            ScrollView {
+              LazyVStack(spacing: 14) {
+                ForEach(0..<count, id: \.self) { index in
+                  Button {
+                    page = index
+                  } label: {
+                    ChapterPagePreview(chapter: chapter, preferred: version, page: index).frame(
+                      width: 82, height: 112
+                    ).overlay(
+                      RoundedRectangle(cornerRadius: 5).stroke(
+                        index == page ? Color.pink : .clear, lineWidth: 3))
+                  }.buttonStyle(.plain)
+                  Text("\(index + 1)").font(.caption).foregroundStyle(.secondary)
                 }
-              }
+              }.padding(.vertical, 70).padding(.horizontal, 10)
+            }.frame(width: 110).background(.black.opacity(0.8))
+          }
+          VStack(spacing: 0) {
+            ZStack {
+              Color.black
+              #if os(iOS)
+                PhoneReaderPager(
+                  index: $page, count: count, rightToLeft: direction == "rtl",
+                  contentID: "\(version.id):\(chapter.revision)",
+                  onTap: { withAnimation { controls.toggle() } }
+                ) { index in
+                  AnyView(
+                    canvas(index).frame(maxWidth: .infinity, maxHeight: .infinity)
+                      .background(.black).foregroundStyle(.white)
+                      .environmentObject(library).environmentObject(session))
+                }
+              #else
+                MacReaderPager(index: $page, count: count, rightToLeft: direction == "rtl",
+                  onTogglePlayback: version.kind == "video" ? { playback.toggle() } : nil) {
+                  index in
+                  AnyView(
+                    canvas(index).frame(maxWidth: .infinity, maxHeight: .infinity).background(
+                      .black
+                    )
+                    .foregroundStyle(.white).environmentObject(playback))
+                }
+              #endif
+            }
+            .clipped().contentShape(Rectangle())
+            #if os(macOS)
+              .onTapGesture { withAnimation { controls.toggle() } }
             #endif
-            if switching { ProgressView("Loading language…").padding(18).glassEffect() }
-          }
-          .clipped().contentShape(Rectangle()).onTapGesture { withAnimation { controls.toggle() } }
-          .overlay(alignment: .top) {
-            if controls { topControls.padding(16).padding(.top, geometry.safeAreaInsets.top) }
-          }
-          .overlay(alignment: .bottom) {
-            if controls {
-              bottomControls.padding(16).padding(.bottom, geometry.safeAreaInsets.bottom)
+            .overlay(alignment: .top) {
+              if controls { topControls.padding(16).padding(.top, safeGeometry.safeAreaInsets.top) }
+            }
+            .overlay(alignment: .bottom) {
+              if controls {
+                bottomControls.padding(16).padding(.bottom, safeGeometry.safeAreaInsets.bottom)
+              }
+            }
+            if descriptionPaneVisible && !descriptionOnRight {
+              descriptionPane.padding(18).frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                  .regularMaterial)
             }
           }
-          if showDescription && !descriptionOnRight {
-            descriptionPane.padding(18).frame(maxWidth: .infinity, alignment: .leading).background(
-              .regularMaterial)
+          if descriptionPaneVisible && descriptionOnRight {
+            descriptionPane.padding(24).frame(width: 235, alignment: .topLeading).frame(
+              maxHeight: .infinity, alignment: .top
+            ).background(.regularMaterial)
           }
-        }
-        if showDescription && descriptionOnRight {
-          descriptionPane.padding(24).frame(width: 235, alignment: .topLeading).frame(
-            maxHeight: .infinity, alignment: .top
-          ).background(.regularMaterial)
         }
       }.ignoresSafeArea()
     }
     .background(.black).foregroundStyle(.white)
+    #if os(iOS)
+      .statusBarHidden(!controls)
+      .persistentSystemOverlays(controls ? .automatic : .hidden)
+    #endif
     #if os(macOS)
       .toolbar(.hidden, for: .windowToolbar)
     #endif
     .sheet(isPresented: $overview) {
-      ChapterOverviewScreen(chapter: chapter, editing: false, onSelect: { page = $0 })
-        .environmentObject(library).environmentObject(session)
+      ChapterOverviewScreen(
+        chapter: chapter, editing: false, preferred: version, onSelect: { page = $0 }
+      )
+      .environmentObject(library).environmentObject(session)
     }
-    .task { await loadOriginalIfNeeded() }
-    .task(id: "\(resolved(page).url?.path ?? ""):\(resolved(page).index)") { updateAspect() }
     .onAppear {
       activeSeconds = library.state(chapter.id)?.progress?.activeSeconds ?? 0
       started = Date()
       isActive = scenePhase == .active
     }
     .onChange(of: page) { _, _ in recordProgress() }
+    .onChange(of: chapter.revision) { _, _ in
+      if let current = chapter.media.first(where: { $0.id == version.id }) { version = current }
+    }
     .onChange(of: scenePhase) { old, new in
       if old == .active {
         accumulateTime()
@@ -139,47 +153,162 @@ struct MangaReaderScreen: View {
     .onDisappear {
       accumulateTime()
       recordProgress()
+      #if os(macOS)
+        playback.reset()
+      #endif
     }
     .accessibilityIdentifier("manga-reader")
   }
-  private var topControls: some View {
+  @ViewBuilder private var topControls: some View {
+    #if os(iOS)
+      phoneTopControls
+    #else
+      desktopTopControls
+    #endif
+  }
+  @ViewBuilder private var bottomControls: some View {
+    #if os(iOS)
+      phoneBottomControls
+    #else
+      desktopBottomControls
+    #endif
+  }
+  #if os(iOS)
+    private var phoneTopControls: some View {
+      HStack(spacing: 12) {
+        Button {
+          library.reader = nil
+        } label: {
+          Image(systemName: "chevron.left").font(.title3.weight(.medium)).frame(
+            width: 44, height: 44
+          )
+          .glassEffect(.regular.interactive(), in: Circle())
+        }.buttonStyle(.plain).accessibilityLabel("Close Reader")
+          .accessibilityIdentifier("reader-back")
+        Button {
+          overview = true
+        } label: {
+          VStack(spacing: 2) {
+            Text(library.title(chapter)).font(.subheadline.weight(.semibold)).lineLimit(1)
+            Text(readerSubtitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+          }.padding(.horizontal, 14).frame(maxWidth: .infinity).frame(height: 44)
+            .contentShape(Capsule()).glassEffect(.regular.interactive(), in: Capsule())
+        }.buttonStyle(.plain).accessibilityLabel("All Pages")
+          .accessibilityValue(library.title(chapter) + ", " + readerSubtitle)
+          .accessibilityIdentifier("reader-all-pages")
+        Button {
+          chapterInfo.toggle()
+        } label: {
+          Image(systemName: "ellipsis").font(.title3.weight(.semibold)).frame(width: 44, height: 44)
+            .glassEffect(.regular.interactive(), in: Circle())
+        }.buttonStyle(.plain).accessibilityLabel("Chapter Description")
+          .accessibilityIdentifier("reader-description")
+          .popover(isPresented: $chapterInfo, arrowEdge: .top) {
+            ScrollView { descriptionPane.padding(20) }
+              .frame(width: 300, height: 240).presentationCompactAdaptation(.popover)
+          }
+      }
+    }
+    private var readerSubtitle: String {
+      library.entity(chapter.workId).map(library.title)
+        ?? library.entity(chapter.authorId).map(library.title) ?? "other author"
+    }
+    private var phoneBottomControls: some View {
+      HStack(spacing: 8) {
+        Menu {
+          Picker(
+            "Media Language",
+            selection: Binding(
+              get: { version.id },
+              set: { id in
+                if let media = chapter.media.first(where: { $0.id == id }) { switchVersion(media) }
+              }
+            )
+          ) {
+            ForEach(chapter.media) { media in Text(media.languageLabel).tag(media.id) }
+          }.pickerStyle(.inline)
+        } label: {
+          Image(systemName: "globe").font(.title3).frame(width: 44, height: 44)
+            .glassEffect(.regular.interactive(), in: Circle())
+        }.buttonStyle(.plain).menuIndicator(.hidden)
+          .accessibilityLabel("Change page language").accessibilityValue(version.languageLabel)
+          .accessibilityIdentifier("reader-language")
+          .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 0) {
+          Button {
+            advance(-1)
+          } label: {
+            Image(systemName: direction == "rtl" ? "chevron.right" : "chevron.left")
+              .frame(width: 36, height: 44)
+          }.disabled(page == 0).accessibilityLabel("Previous Page")
+          Text("\(page + 1) / \(count)").font(.subheadline.monospacedDigit())
+            .frame(minWidth: 56).accessibilityIdentifier("reader-page-number")
+          Button {
+            advance(1)
+          } label: {
+            Image(systemName: direction == "rtl" ? "chevron.left" : "chevron.right")
+              .frame(width: 36, height: 44)
+          }.disabled(page + 1 >= count).accessibilityLabel("Next Page")
+        }.buttonStyle(.plain).padding(.horizontal, 4).glassEffect(in: Capsule())
+        ReaderPageStarButton(chapter: chapter, page: page)
+          .frame(maxWidth: .infinity, alignment: .trailing)
+      }
+    }
+  #endif
+  #if os(macOS)
+  private func readerIcon(_ symbol: String) -> some View {
+    Image(systemName: symbol).font(.title3.weight(.medium)).frame(width: 44, height: 44)
+      .contentShape(Circle()).glassEffect(.regular.tint(.black.opacity(0.4)).interactive(), in: Circle())
+  }
+  private var desktopTopControls: some View {
     HStack(spacing: 12) {
-      HStack(spacing: 10) {
-        Button("Close Reader", systemImage: "chevron.left") { library.reader = nil }.labelStyle(
-          .iconOnly
-        ).buttonStyle(.plain).frame(width: 24, height: 24)
-        Text(library.title(chapter)).font(.headline).lineLimit(1)
-      }.padding(.horizontal, 14).padding(.vertical, 9)
-        .glassEffect(.regular.tint(.black.opacity(0.4)), in: Capsule())
+      Button { library.reader = nil } label: { readerIcon("chevron.left") }
+        .buttonStyle(.plain).accessibilityLabel("Close Reader")
+        .accessibilityIdentifier("reader-back")
+      Button { thumbnails.toggle() } label: { readerIcon("sidebar.left") }
+        .buttonStyle(.plain).accessibilityLabel("Thumbnail Sidebar")
+        .accessibilityValue(thumbnails ? "Shown" : "Hidden")
       Spacer()
       Menu {
-        ForEach(chapter.media) { media in
-          Button {
-            switchVersion(media)
-          } label: {
-            if media.id == version.id {
-              Label(media.language.uppercased(), systemImage: "checkmark")
-            } else {
-              Text(media.language.uppercased())
-            }
+        Picker("Media Language", selection: Binding(get: { version.id }, set: { id in
+          if let media = chapter.media.first(where: { $0.id == id }) { switchVersion(media) }
+        })) {
+          ForEach(chapter.media) { media in Text(media.languageLabel).tag(media.id) }
+        }.pickerStyle(.inline)
+      } label: { readerIcon("globe") }
+        .menuIndicator(.hidden).buttonStyle(.plain).accessibilityLabel("Change page language")
+        .accessibilityValue(version.languageLabel).accessibilityIdentifier("reader-language")
+      Button { overview = true } label: { readerIcon("square.grid.3x3") }
+        .buttonStyle(.plain).accessibilityLabel("All Pages")
+        .accessibilityIdentifier("reader-all-pages")
+      Menu {
+        Toggle("Chapter Description", isOn: $showDescription)
+        if library.canManage {
+          Divider()
+          Button("Delete Chapter", systemImage: "trash", role: .destructive) {
+            library.requestDeletion(chapter)
           }
         }
-      } label: {
-        Label(version.language.uppercased(), systemImage: "globe")
-      }.buttonStyle(.glass).disabled(switching).accessibilityLabel("Change page language")
-      Menu("Reader Options", systemImage: "ellipsis") {
-        Button("All Pages", systemImage: "square.grid.3x3") { overview = true }
-        Toggle("Thumbnail Sidebar", isOn: $thumbnails)
-        Toggle("Chapter Description", isOn: $showDescription)
-        #if os(macOS)
-          Button("Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") {
-            NSApp.keyWindow?.toggleFullScreen(nil)
-          }
-        #endif
-      }.labelStyle(.iconOnly).buttonStyle(.glass)
+      } label: { readerIcon("ellipsis") }
+        .menuIndicator(.hidden).buttonStyle(.plain).accessibilityLabel("Reader Options")
     }
   }
-  private var bottomControls: some View {
+  private var desktopBottomControls: some View {
+    ZStack(alignment: .bottom) {
+      VStack(spacing: 10) {
+        if version.kind == "video" { ReaderVideoControls(playback: playback) }
+        desktopPageControls
+      }.padding(.horizontal, 56)
+      HStack {
+        Spacer()
+        Button { NSApp.keyWindow?.toggleFullScreen(nil) } label: {
+          readerIcon("arrow.up.left.and.arrow.down.right")
+        }.buttonStyle(.plain).accessibilityLabel("Full Screen")
+          .accessibilityIdentifier("reader-full-screen")
+      }
+    }.frame(maxWidth: .infinity)
+  }
+  private var desktopPageControls: some View {
     HStack(spacing: 18) {
       Button("Previous Page", systemImage: direction == "rtl" ? "chevron.right" : "chevron.left") {
         advance(-1)
@@ -202,6 +331,14 @@ struct MangaReaderScreen: View {
       ) { library.mark(chapter, starred: true, page: page) }.labelStyle(.iconOnly)
     }.buttonStyle(.plain).padding(.horizontal, 20).padding(.vertical, 13).glassEffect(in: Capsule())
   }
+  #endif
+  private var descriptionPaneVisible: Bool {
+    #if os(iOS)
+      false
+    #else
+      showDescription
+    #endif
+  }
   private var descriptionPane: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text(library.title(chapter)).font(.headline)
@@ -211,99 +348,38 @@ struct MangaReaderScreen: View {
     }
   }
   @ViewBuilder private func canvas(_ canonical: Int) -> some View {
-    let resolved = resolved(canonical)
-    if let url = resolved.url {
-      if resolved.kind == "video" {
-        NativeVideoPage(
-          url: url,
-          onComplete: {
-            videoCompleted = true
-            recordProgress()
-          })
-      } else {
-        NativeReadingPage(
-          url: url, pdfPage: resolved.kind == "pdf" ? resolved.index : nil,
-          onSwipe: { advance(direction == "rtl" ? -$0 : $0) })
-      }
+    if let source = library.pageMedia(chapter, preferred: version, page: canonical) {
+      ReadingMediaPage(
+        media: source.media, index: source.index,
+        enabled: shouldLoadPage(canonical),
+        isCurrent: canonical == page,
+        onAspect: { value in
+          if canonical == page { pageAspect = CGFloat(value) }
+        },
+        onComplete: {
+          videoCompleted = true
+          recordProgress()
+        })
     } else {
       ContentUnavailableView(
         "Page unavailable", systemImage: "photo",
-        description: Text(
-          "This language has no matching page and the original is not available on this device."))
+        description: Text("This language has no matching page."))
     }
   }
-  private func resolved(_ canonical: Int) -> (url: URL?, kind: String, index: Int) {
-    let mapped = version.sourcePage(at: canonical)
-    if let mapped, mapped >= 0, mapped < version.pageCount {
-      let url = version.kind == "images" ? (mapped < urls.count ? urls[mapped] : nil) : urls.first
-      return (url, version.kind, mapped)
-    }
-    let source = original.sourcePage(at: canonical)
-    let originalURL =
-      original.kind == "images"
-      ? source.flatMap { $0 < originalURLs.count ? originalURLs[$0] : nil } : originalURLs.first
-    return (source == nil ? nil : originalURL, original.kind, source ?? canonical)
+  private func shouldLoadPage(_ index: Int) -> Bool {
+    #if os(iOS)
+      // UICollectionView creates only visible/prefetched cells. Start those
+      // loads during a fast swipe instead of waiting for the settled page index.
+      return true
+    #else
+      return abs(index - page) <= 1
+    #endif
   }
   private func advance(_ delta: Int) { page = min(max(0, page + delta), max(0, count - 1)) }
   private func switchVersion(_ media: MediaVersion) {
     guard media.id != version.id else { return }
-    switching = true
-    Task {
-      defer { switching = false }
-      do {
-        let files: [URL]
-        if let cached = library.cachedURLs(media) {
-          files = cached
-        } else {
-          files = try await library.smb.download(media)
-        }
-        version = media
-        urls = files
-        page = min(page, max(0, count - 1))
-        await loadOriginalIfNeeded()
-      } catch { library.show(error) }
-    }
-  }
-  private func loadOriginalIfNeeded() async {
-    guard version.id != original.id else {
-      originalURLs = urls
-      return
-    }
-    if let cached = library.cachedURLs(original) {
-      originalURLs = cached
-      return
-    }
-    if version.pageAlignment?.contains(where: { $0 == nil }) == true
-      || version.pageCount < original.pageCount
-    {
-      originalURLs = (try? await library.smb.download(original)) ?? []
-    }
-  }
-  private func updateAspect() {
-    let source = resolved(page)
-    guard let url = source.url else { return }
-    if source.kind == "video" {
-      pageAspect = 16.0 / 9.0
-      return
-    }
-    if source.kind == "pdf",
-      let box = PDFDocument(url: url)?.page(at: source.index)?.bounds(for: .mediaBox),
-      box.height > 0
-    {
-      pageAspect = box.width / box.height
-      return
-    }
-    if let image = CGImageSourceCreateWithURL(url as CFURL, nil),
-      let properties = CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any],
-      let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
-      let height = properties[kCGImagePropertyPixelHeight] as? NSNumber, height.doubleValue > 0
-    {
-      let orientation = (properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
-      pageAspect =
-        (5...8).contains(orientation)
-        ? CGFloat(height.doubleValue / width.doubleValue)
-        : CGFloat(width.doubleValue / height.doubleValue)
-    }
+    version = media
+    page = min(page, max(0, count - 1))
   }
   private func accumulateTime() {
     if isActive { activeSeconds += max(0, Int(Date().timeIntervalSince(started))) }
@@ -321,6 +397,29 @@ struct MangaReaderScreen: View {
             || (version.kind == "video" ? videoCompleted : page == count - 1),
           activeSeconds: activeSeconds
             + (isActive ? max(0, Int(Date().timeIntervalSince(started))) : 0))))
+  }
+}
+
+struct ReaderPageStarButton: View {
+  let chapter: LibraryEntity
+  let page: Int
+  @EnvironmentObject private var library: LibraryUIModel
+  private var starred: Bool { library.stateInput(chapter.id, page: page)?.starred == true }
+  var body: some View {
+    Button {
+      library.mark(chapter, starred: true, page: page)
+    } label: {
+      Image(systemName: starred ? "star.fill" : "star").font(.title3)
+        .foregroundStyle(starred ? Color.yellow : Color.white).frame(width: 44, height: 44)
+        .glassEffect(.regular.interactive(), in: Circle())
+    }.buttonStyle(.plain).accessibilityLabel(starred ? "Unstar Page" : "Star Page")
+      .accessibilityValue(starred ? "Starred" : "Not starred")
+      .accessibilityIdentifier("reader-star")
+      .contextMenu {
+        Button("Favorite Page", systemImage: "heart") {
+          library.mark(chapter, starred: false, page: page)
+        }
+      }
   }
 }
 
@@ -355,29 +454,130 @@ struct NativeVideoPage: View {
     }.onDisappear { player?.pause() }
   }
 }
+struct ReadingMediaPage: View {
+  let media: MediaVersion
+  let index: Int
+  var enabled = true
+  var isCurrent = true
+  var onAspect: (Double) -> Void = { _ in }
+  var onComplete: (() -> Void)?
+  @EnvironmentObject private var library: LibraryUIModel
+  @State private var url: URL?
+  @State private var error = ""
+  @State private var retry = 0
+  @State private var loadedRequest: String?
+  private var requestID: String {
+    "\(media.id):\(media.storageRootId):\(media.relativePaths):\(index):\(enabled):\(retry)"
+  }
+  var body: some View {
+    Group {
+      if let url {
+        if media.kind == "video" {
+          #if os(macOS)
+            MacVideoPage(url: url, isCurrent: isCurrent, onComplete: onComplete)
+          #else
+            NativeVideoPage(url: url, onComplete: onComplete)
+          #endif
+        } else {
+          NativeReadingPage(
+            url: url, pdfPage: media.kind == "pdf" ? index : nil, onSwipe: { _ in },
+            isCurrent: isCurrent, onAspect: onAspect)
+        }
+      } else if !error.isEmpty {
+        VStack(spacing: 12) {
+          Text(error).font(.callout)
+          Button("Retry") { retry += 1 }
+        }.padding(24)
+      } else {
+        ProgressView("Loading page…")
+      }
+    }.task(id: requestID) {
+      guard enabled else { return }
+      let request = requestID
+      if loadedRequest == request, url != nil { return }
+      url = nil
+      error = ""
+      do {
+        let result = try await library.mediaURL(media, index: media.kind == "images" ? index : 0)
+        guard !Task.isCancelled else { return }
+        url = result
+        loadedRequest = request
+        if media.kind == "video" { onAspect(16.0 / 9.0) }
+      } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+    }
+  }
+}
+struct MediaPagePreview: View {
+  let media: MediaVersion
+  let index: Int
+  @EnvironmentObject private var library: LibraryUIModel
+  @State private var url: URL?
+  @State private var loading = true
+  var body: some View {
+    ZStack {
+      PagePreview(url: url, kind: media.kind, index: index)
+      if loading { ProgressView().controlSize(.small) }
+    }.onDisappear {
+      url = nil
+      loading = false
+    }
+    .task(id: "\(media.id):\(media.storageRootId):\(media.relativePaths):\(index)") {
+      loading = true
+      let result = try? await library.mediaURL(media, index: media.kind == "images" ? index : 0)
+      guard !Task.isCancelled else { return }
+      url = result
+      loading = false
+    }
+  }
+}
+struct ChapterPagePreview: View {
+  let chapter: LibraryEntity
+  var preferred: MediaVersion? = nil
+  let page: Int
+  @EnvironmentObject private var library: LibraryUIModel
+  var body: some View {
+    if let source = library.pageMedia(chapter, preferred: preferred, page: page) {
+      MediaPagePreview(media: source.media, index: source.index)
+    } else {
+      Image(systemName: "photo").foregroundStyle(.secondary)
+    }
+  }
+}
 struct PagePreview: View {
   let url: URL?
   let kind: String
   let index: Int
+  var contentMode: ContentMode = .fill
   @State private var image: CGImage?
   var body: some View {
-    ZStack {
-      Rectangle().fill(.quaternary)
-      if let image {
-        Image(decorative: image, scale: 1).resizable().scaledToFit()
-      } else {
-        FileThumbnail(url: url, symbol: kind == "video" ? "play.rectangle" : "photo")
+    Color.clear.overlay {
+      GeometryReader { geometry in
+        if let image {
+          Image(decorative: image, scale: 1).resizable().aspectRatio(contentMode: contentMode)
+            .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+        } else {
+          FileThumbnail(
+            url: url, symbol: kind == "video" ? "play.rectangle" : "photo", contentMode: contentMode
+          )
+        }
       }
-    }.clipped().task(id: "\(url?.path ?? ""):\(index)") {
+    }.clipped().onDisappear { image = nil }.task(id: "\(url?.path ?? ""):\(index)") {
       image = nil
-      if kind == "pdf", let url, let page = PDFDocument(url: url)?.page(at: index) {
-        #if os(macOS)
-          var rect = CGRect(x: 0, y: 0, width: 300, height: 420)
-          image = page.thumbnail(of: rect.size, for: .mediaBox).cgImage(
-            forProposedRect: &rect, context: nil, hints: nil)
-        #else
-          image = page.thumbnail(of: CGSize(width: 300, height: 420), for: .mediaBox).cgImage
-        #endif
+      if kind == "pdf", let url {
+        let result = try? await FileTasks.perform { () -> CGImage? in
+          guard let document = PDFDocument(url: url), let page = document.page(at: index) else {
+            return nil
+          }
+          #if os(macOS)
+            var rect = CGRect(x: 0, y: 0, width: 300, height: 420)
+            return page.thumbnail(of: rect.size, for: .mediaBox).cgImage(
+              forProposedRect: &rect, context: nil, hints: nil)
+          #else
+            return page.thumbnail(of: CGSize(width: 300, height: 420), for: .mediaBox).cgImage
+          #endif
+        }
+        guard !Task.isCancelled else { return }
+        image = result ?? nil
       }
     }
   }
@@ -385,6 +585,7 @@ struct PagePreview: View {
 struct ChapterOverviewScreen: View {
   let chapter: LibraryEntity
   var editing: Bool
+  var preferred: MediaVersion? = nil
   var onSelect: ((Int) -> Void)?
   var onSaved: ((LibraryEntity) -> Void)?
   @EnvironmentObject private var library: LibraryUIModel
@@ -397,55 +598,56 @@ struct ChapterOverviewScreen: View {
   private var media: MediaVersion? {
     editing
       ? (chapter.media.first { $0.language == chapter.originalLanguage } ?? chapter.media.first)
-      : chapter.preferredMedia(AppConfiguration.preferredLanguage)
+      : (preferred ?? chapter.preferredMedia(AppConfiguration.preferredLanguage))
   }
   var body: some View {
     NavigationStack {
-      ScrollView {
-        VStack(alignment: .leading, spacing: 22) {
-          Text(
-            editing
-              ? "Drag pages to change reading order. Source filenames stay unchanged. Saved page positions follow the new order."
-              : "Choose a page to return to the reader."
-          ).foregroundStyle(.secondary)
-          if let media {
-            let urls = library.cachedURLs(media) ?? []
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 18)], spacing: 22) {
-              ForEach(order, id: \.self) { index in
-                Button {
-                  if !editing {
-                    onSelect?(index)
-                    dismiss()
-                  }
-                } label: {
-                  VStack(spacing: 8) {
-                    let source =
-                      editing
-                      ? (
-                        url: media.kind == "images"
-                          ? (index < urls.count ? urls[index] : nil) : urls.first, kind: media.kind,
-                        index: index
-                      ) : library.pageSource(chapter, page: index)
-                    PagePreview(url: source.url, kind: source.kind, index: source.index)
-                      .aspectRatio(0.72, contentMode: .fit).clipShape(
-                        RoundedRectangle(cornerRadius: 8))
-                    Text("Page \(index + 1)").font(.caption)
-                  }
-                }.buttonStyle(.plain)
-                  .onDrag {
-                    if editing { dragging = index }
-                    return NSItemProvider(object: String(index) as NSString)
-                  }
-                  .onDrop(
-                    of: [UTType.text],
-                    delegate: PageOrderDrop(
-                      target: index, order: $order, dragging: $dragging, enabled: editing))
+      VStack(spacing: 0) {
+        SheetHeading(editing ? "Page Order" : "All Pages", inset: 24)
+        ScrollView {
+          VStack(alignment: .leading, spacing: 22) {
+            Text(
+              editing
+                ? "Drag pages to change reading order. Source filenames stay unchanged. Saved page positions follow the new order."
+                : "Choose a page to return to the reader."
+            ).foregroundStyle(.secondary)
+            if let media {
+              LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 18)], spacing: 22) {
+                ForEach(order, id: \.self) { index in
+                  Button {
+                    if !editing {
+                      onSelect?(index)
+                      dismiss()
+                    }
+                  } label: {
+                    VStack(spacing: 8) {
+                      if editing {
+                        MediaPagePreview(media: media, index: index)
+                          .aspectRatio(0.72, contentMode: .fit).clipShape(
+                            RoundedRectangle(cornerRadius: 8))
+                      } else {
+                        ChapterPagePreview(chapter: chapter, preferred: media, page: index)
+                          .aspectRatio(0.72, contentMode: .fit).clipShape(
+                            RoundedRectangle(cornerRadius: 8))
+                      }
+                      Text("Page \(index + 1)").font(.caption)
+                    }
+                  }.buttonStyle(.plain)
+                    .onDrag {
+                      if editing { dragging = index }
+                      return NSItemProvider(object: String(index) as NSString)
+                    }
+                    .onDrop(
+                      of: [UTType.text],
+                      delegate: PageOrderDrop(
+                        target: index, order: $order, dragging: $dragging, enabled: editing))
+                }
               }
             }
-          }
-          if !status.isEmpty { Text(status).font(.caption).foregroundStyle(.secondary) }
-        }.padding(24)
-      }.navigationTitle(editing ? "Page Order" : "All Pages")
+            if !status.isEmpty { Text(status).font(.caption).foregroundStyle(.secondary) }
+          }.padding(24)
+        }
+      }.navigationTitle("")
         .toolbar {
           ToolbarItem(placement: .cancellationAction) {
             Button("Close") { dismiss() }.disabled(saving)

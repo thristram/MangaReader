@@ -19,11 +19,11 @@ sources += [p for p in sorted((root / "apps/apple/Mac").glob("*.swift"))
             if p.name != "AppDelegate.swift"]
 subprocess.run([
     "xcrun", "swiftc", "-parse-as-library", "-swift-version", "5", "-target", "arm64-apple-macos26.0", "-I", str(products),
-    "-Xcc", "-fmodule-map-file=" + str(derived.resolve() / "SourcePackages/checkouts/AMSMB2/Dependencies/libsmb2/include/module.modulemap"),
-    "-Xcc", "-I" + str(derived.resolve() / "SourcePackages/checkouts/AMSMB2/Dependencies/libsmb2/include"),
+    "-Xcc", "-fmodule-map-file=" + str(root / "packages/AMSMB2/Dependencies/libsmb2/include/module.modulemap"),
+    "-Xcc", "-I" + str(root / "packages/AMSMB2/Dependencies/libsmb2/include"),
     "-F", str(products / "PackageFrameworks"), "-framework", "AMSMB2",
     "-Xlinker", "-rpath", "-Xlinker", str(products / "PackageFrameworks"),
-    *map(str, sources), str(root / "scripts/native-ui-fixtures.swift"), str(root / "scripts/verify-mac-auth-ui.swift"),
+    *map(str, sources), str(root / "scripts/native-ui-fixtures.swift"), str(root / "scripts/verify-mac-auth-ui.swift"), str(root / "scripts/author-removal-checks.swift"), str(root / "scripts/import-responsiveness-checks.swift"), str(root / "scripts/single-file-import-checks.swift"), str(root / "scripts/reader-controls-checks.swift"),
     str(products / "MangaCore.o"), "-o", str(target / "MacOS/WelcomeChecks"),
 ], check=True)
 info = plistlib.loads((products / "MangaReaderMac.app/Contents/Info.plist").read_bytes())

@@ -14,22 +14,54 @@ import Security
 final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding
 {
   @Published var account: VerifiedAccount?
-  @Published var entities: [LibraryEntity] = []
-  @Published var states: [PersonalState] = []
+  @Published var entities: [LibraryEntity] = [] {
+    didSet {
+      cachedCatalog = nil
+      metadataGeneration &+= 1
+    }
+  }
+  private(set) var metadataGeneration: UInt64 = 0
+  @Published var states: [PersonalState] = [] { didSet { cachedStates = nil } }
   @Published var status = "Sign in to your MangaReader library."
   @Published var busy = false
   var onChange: (() -> Void)?
+  private var cachedCatalog: LibraryCatalog?
+  private struct StateKey: Hashable {
+    let entity: String
+    let page: Int?
+  }
+  private var cachedStates: [StateKey: PersonalState]?
+  private let snapshotWriter = SnapshotWriter()
+  var catalog: LibraryCatalog {
+    if let cachedCatalog { return cachedCatalog }
+    let result = LibraryCatalog(entities)
+    cachedCatalog = result
+    return result
+  }
+  func personalState(_ id: String, page: Int? = nil) -> PersonalState? {
+    if cachedStates == nil {
+      var result: [StateKey: PersonalState] = [:]
+      for state in states {
+        result[StateKey(entity: state.entityId, page: state.pageIndex)] = state
+      }
+      cachedStates = result
+    }
+    return cachedStates?[StateKey(entity: id, page: page)]
+  }
   private var credentials: StoredCredentials?
   private var webSession: ASWebAuthenticationSession?
   private var refreshTask: Task<StoredCredentials, Error>?
   private var pollTask: Task<Void, Never>?
   private var epoch = UUID()
   private let cacheRoot: URL?
-  init(cacheRoot: URL? = nil) {
+  private let providedAPI: APIClient?
+  init(cacheRoot: URL? = nil, apiClient: APIClient? = nil) {
     self.cacheRoot = cacheRoot
+    self.providedAPI = apiClient
     super.init()
   }
   var api: APIClient {
+    if let providedAPI { return providedAPI }
     let config = AppConfiguration.current()
     let generation = epoch
     let owner = account?.ownerId
@@ -316,9 +348,8 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
     entities = snapshot.entities
     states = snapshot.states
     if let dir = cacheDirectory {
-      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-      try JSONEncoder().encode(snapshot).write(
-        to: dir.appendingPathComponent("snapshot.json"), options: .atomic)
+      try await snapshotWriter.save(snapshot, to: dir)
+      guard account?.ownerId == owner else { return }
     }
     status = "Library synced"
     onChange?()
@@ -363,10 +394,7 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
     onChange?()
   }
   func visibleEntities(kind: EntityKind? = nil) -> [LibraryEntity] {
-    entities.filter {
-      (kind == nil || $0.kind == kind)
-        && Visibility.visible($0, in: entities, showNSFW: AppConfiguration.showNSFW)
-    }
+    catalog.visible(kind: kind, showNSFW: AppConfiguration.showNSFW)
   }
   func create(_ input: MetadataInput) async throws -> LibraryEntity {
     let owner = account?.ownerId
@@ -383,6 +411,93 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
     if let i = entities.firstIndex(where: { $0.id == entity.id }) { entities[i] = updated }
     onChange?()
   }
+  func delete(_ entity: LibraryEntity) async throws {
+    let owner = account?.ownerId
+    try await api.delete(entity)
+    guard account?.ownerId == owner else { throw LoginError.invalidToken }
+    entities.removeAll { $0.id == entity.id }
+    states.removeAll { $0.entityId == entity.id }
+    onChange?()
+  }
+  func deleteTag(_ tag: LibraryEntity) async throws {
+    guard tag.kind == .tag else { return }
+    let owner = account?.ownerId
+    // Detach only this tag. Chapter metadata, personal state and files survive.
+    for (reference, input) in TagRemovalPlan.updates(for: tag.id, entities: entities) {
+      guard account?.ownerId == owner else { throw LoginError.invalidToken }
+      try await update(reference, input: input)
+    }
+    guard account?.ownerId == owner else { throw LoginError.invalidToken }
+    try await delete(tag)
+  }
+  func deleteAuthor(_ author: LibraryEntity) async throws {
+    guard author.kind == .author, account?.scopes.contains("manga:manage") == true,
+      let owner = account?.ownerId
+    else { throw LoginError.invalidToken }
+    // Use current revisions, including hidden works and changes made on another device.
+    try await synchronize()
+    guard owner == account?.ownerId else { throw LoginError.invalidToken }
+    guard let current = entities.first(where: { $0.id == author.id && !$0.deleted }) else { return }
+    let references = entities.filter { !$0.deleted && $0.authorId == current.id }
+    if references.isEmpty {
+      try await delete(current)
+      return
+    }
+    guard current.title.caseInsensitiveCompare("other author") != .orderedSame else {
+      throw LoginError.server("The default author is still used by comics and cannot be deleted.")
+    }
+    let fallback: LibraryEntity
+    if let existing = entities.first(where: {
+      $0.kind == .author && !$0.deleted && $0.id != current.id
+        && $0.title.caseInsensitiveCompare("other author") == .orderedSame
+    }) {
+      fallback = existing
+    } else {
+      fallback = try await create(.init(kind: .author, title: "other author"))
+    }
+    guard owner == account?.ownerId else { throw LoginError.invalidToken }
+    let changes = AuthorRemovalPlan.updates(
+      for: current, replacement: fallback.id, entities: entities)
+    var completed: [String: LibraryEntity] = [:]
+    func publishCompleted() {
+      guard owner == account?.ownerId, !completed.isEmpty else { return }
+      entities = entities.map { entity in
+        guard let updated = completed[entity.id], updated.revision >= entity.revision else {
+          return entity
+        }
+        return updated
+      }
+      onChange?()
+    }
+    do {
+      for (entity, input) in changes {
+        try Task.checkCancellation()
+        guard owner == account?.ownerId else { throw LoginError.invalidToken }
+        let updated = try await api.update(entity, input: input)
+        guard owner == account?.ownerId else { throw LoginError.invalidToken }
+        completed[entity.id] = updated
+      }
+      publishCompleted()
+      // The API also refuses deletion if a concurrent import added a new reference.
+      guard owner == account?.ownerId else { throw LoginError.invalidToken }
+      try await delete(current)
+    } catch {
+      publishCompleted()
+      throw error
+    }
+  }
+  func removeDestination(_ root: LibraryEntity) async throws {
+    // Referenced roots stay as read-only import sources so removal from archive
+    // destinations cannot orphan an existing chapter or delete its files.
+    if entities.contains(where: { !$0.deleted && $0.media.contains { $0.storageRootId == root.id } }
+    ) {
+      var input = root.input
+      input.description = LibraryDestinationIdentity.sourceOnlyDescription
+      try await update(root, input: input)
+    } else {
+      try await delete(root)
+    }
+  }
   func saveState(_ input: StateInput) async throws {
     let owner = account?.ownerId
     let old = states.first { $0.entityId == input.entityId && $0.pageIndex == input.pageIndex }
@@ -391,5 +506,14 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
     states.removeAll { $0.id == value.id }
     states.append(value)
     onChange?()
+  }
+}
+
+// Serial file writes and JSON encoding stay off the UI actor.
+private actor SnapshotWriter {
+  func save(_ snapshot: SyncSnapshot, to directory: URL) throws {
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try JSONEncoder().encode(snapshot).write(
+      to: directory.appendingPathComponent("snapshot.json"), options: .atomic)
   }
 }

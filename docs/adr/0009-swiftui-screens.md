@@ -2,6 +2,8 @@
 
 Status: Accepted, 2026-10-14. Updates the presentation decision in ADR 0006; requested by the user after reviewing the incomplete native UI.
 
+Reader paging refinement: [ADR 0011](0011-iphone-native-reader.md) embeds UIKit's scroll-style page controller inside the shared SwiftUI reader. Library/navigation screens remain SwiftUI.
+
 Both targets render their welcome, library, detail, settings and reader screens in SwiftUI. macOS uses NavigationSplitView and a native sidebar List with SF Symbols and text, grouped headings, settings submenus and an account footer. One unified toolbar contains navigation and actions. iPhone uses NavigationStack and native TabView with large titles, search, floating Liquid Glass tabs and the system continue-reading bottom accessory. No storyboard is used.
 
 AppKit/UIKit remain responsible for application/window/scene lifecycle and host SwiftUI through NSHostingController/UIHostingController. The existing manual NSApplication bootstrap is retained because this target has no main nib. Hosting sizing is explicit so content does not shrink the initial Mac window. Public AppKit sidebar appearance/native swipe adapters, NSPageController on Mac, PDFKit, AVKit, QuickLookThumbnailing and native zoom scroll views remain system components embedded in SwiftUI; ASWebAuthenticationSession and Keychain are unchanged.

@@ -57,13 +57,13 @@ struct TagTokenPicker: View {
   @State private var query = ""
   @State private var focused = false
   @State private var creating = false
-  private var tags: [LibraryEntity] { session.entities.filter { $0.kind == .tag && !$0.deleted } }
+  private var tags: [LibraryEntity] { session.catalog.visible(kind: .tag, showNSFW: true) }
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       ScrollView(.horizontal, showsIndicators: false) {
         HStack(spacing: 7) {
           ForEach(selected, id: \.self) { id in
-            if let tag = tags.first(where: { $0.id == id }) {
+            if let tag = session.catalog.entity(id, showNSFW: true) {
               HStack(spacing: 6) {
                 Text(tag.title)
                 Button("Remove " + tag.title, systemImage: "xmark") {
@@ -77,11 +77,12 @@ struct TagTokenPicker: View {
         }
       }
       TextField("Search or create a tag", text: $query, onEditingChanged: { focused = $0 })
+        .fullFieldFocus()
         .textFieldStyle(.roundedBorder).onSubmit(createTag)
       if focused || !query.isEmpty {
         VStack(alignment: .leading, spacing: 0) {
           ForEach(
-            tags.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) }
+            tags.lazy.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) }
               .prefix(8)
           ) { tag in
             Button {
@@ -140,12 +141,16 @@ struct EntitySearchField: View {
   @State private var query = ""
   @State private var expanded = false
   private var choices: [LibraryEntity] {
-    session.visibleEntities(kind: kind)
+    session.catalog.search(kind: kind, query: query, limit: 7, showNSFW: AppConfiguration.showNSFW)
+  }
+  private var selectedTitle: String {
+    session.catalog.entity(selected, showNSFW: AppConfiguration.showNSFW)?.title ?? ""
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
-      TextField(label, text: $query, onEditingChanged: { expanded = $0 }).textFieldStyle(
-        .roundedBorder)
+      TextField(label, text: $query, onEditingChanged: { expanded = $0 }).fullFieldFocus()
+        .textFieldStyle(
+          .roundedBorder)
       if expanded {
         VStack(alignment: .leading, spacing: 0) {
           Button("None") {
@@ -154,8 +159,7 @@ struct EntitySearchField: View {
             expanded = false
           }.padding(7)
           ForEach(
-            choices.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) }
-              .prefix(7)
+            choices
           ) { entity in
             Button(entity.title) {
               selected = entity.id
@@ -172,13 +176,21 @@ struct EntitySearchField: View {
         }.frame(maxWidth: .infinity, alignment: .leading).background(
           .quaternary, in: RoundedRectangle(cornerRadius: 8))
       }
-    }.onAppear { query = choices.first { $0.id == selected }?.title ?? "" }
-      .onChange(of: selected) { _, _ in query = choices.first { $0.id == selected }?.title ?? "" }
+    }.onAppear { query = selectedTitle }
+      .onChange(of: selected) { _, _ in query = selectedTitle }
+      .onChange(of: selectedTitle) { _, title in if !expanded { query = title } }
+      .onChange(of: session.metadataGeneration) { _, _ in
+        if let id = selected, session.catalog.entity(id, showNSFW: true) == nil {
+          selected = nil
+          query = ""
+        }
+      }
   }
 }
 struct SourceLinksEditor: View {
   @Binding var links: [SourceLink]
   @State private var rows: [UUID] = []
+  @FocusState private var focusedSource: UUID?
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       ForEach(rows, id: \.self) { id in
@@ -189,7 +201,11 @@ struct SourceLinksEditor: View {
             Text("Patreon").tag("patreon")
             Text("e-hentai").tag("ehentai")
           }.labelsHidden().frame(width: 120)
-          TextField("ID or HTTPS URL", text: field(id, site: false))
+          TextField("", text: field(id, site: false))
+            .labelsHidden().textFieldStyle(.plain).multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, minHeight: 32).contentShape(Rectangle())
+            .focused($focusedSource, equals: id).onTapGesture { focusedSource = id }
+            .accessibilityLabel("Source link")
           Button("Remove Link", systemImage: "minus.circle") {
             if let index = rows.firstIndex(of: id), links.indices.contains(index) {
               links.remove(at: index)
@@ -199,9 +215,11 @@ struct SourceLinksEditor: View {
         }
       }
       Button("Add Source Link", systemImage: "plus") {
-        links.append(.init(site: "pixiv", value: ""))
-        rows.append(UUID())
-      }
+        links.append(.init(site: SourceLink.nextUnusedSite(in: links), value: ""))
+        let id = UUID()
+        rows.append(id)
+        focusedSource = id
+      }.disabled(links.count >= SourceLink.supportedSites.count)
     }.onAppear(perform: reconcileRows).onChange(of: links.count) { _, _ in reconcileRows() }
   }
   private func reconcileRows() {
@@ -234,6 +252,9 @@ struct MetadataEditor: View {
   @State private var pageOverview = false
   @State private var creating: EditorRequest?
   @State private var editingRevision: Int?
+  #if os(macOS)
+    @State private var mediaLanguageReview: MediaLanguageReview?
+  #endif
   init(request: EditorRequest, onSave: ((LibraryEntity) -> Void)? = nil) {
     self.request = request
     self.onSave = onSave
@@ -243,6 +264,15 @@ struct MetadataEditor: View {
           kind: request.kind, title: request.initialTitle,
           originalLanguage: AppConfiguration.preferredLanguage,
           storageKind: request.kind == .storageRoot ? "local" : nil))
+    if request.kind == .author {
+      var author =
+        request.entity?.input ?? MetadataInput(kind: .author, title: request.initialTitle)
+      for site in SourceLink.supportedSites
+      where !author.sources.contains(where: { $0.site == site }) {
+        author.sources.append(.init(site: site, value: ""))
+      }
+      _input = State(initialValue: author)
+    }
     _editingRevision = State(initialValue: request.entity?.revision)
     _textLanguage = State(
       initialValue: request.entity?.originalLanguage ?? AppConfiguration.preferredLanguage)
@@ -251,73 +281,110 @@ struct MetadataEditor: View {
   private var description: Binding<String> { localizedField(title: false) }
   var body: some View {
     NavigationStack {
-      Form {
-        Section("Title & Description") {
-          Picker("Text language", selection: $textLanguage) {
-            ForEach(contentLanguages, id: \.code) { Text($0.name).tag($0.code) }
-          }
-          HStack {
-            TextField("Title", text: title)
-            Button("Translate Title", systemImage: "character.bubble") { translate(field: "title") }
-              .labelStyle(.iconOnly).disabled(translating)
-          }
-          HStack(alignment: .top) {
-            TextEditor(text: description).scrollContentBackground(.hidden).frame(minHeight: 95)
-            Button("Translate Description", systemImage: "character.bubble") {
-              translate(field: "description")
-            }.labelStyle(.iconOnly).disabled(translating)
-          }
-          Text(
-            "Missing translations use the original text. Translating text keeps the same comic pages."
-          ).font(.caption).foregroundStyle(.secondary)
-        }
-        if ![EntityKind.author, .tag, .storageRoot].contains(input.kind) {
-          Section("Collection") {
-            EntitySearchField(
-              label: "Search authors", kind: .author, selected: $input.authorId,
-              create: { creating = .init(kind: .author, initialTitle: $0) })
-            EntitySearchField(
-              label: "Series (optional)", kind: .series, selected: $input.seriesId,
-              create: { creating = .init(kind: .series, initialTitle: $0) })
-            if input.kind == .chapter {
-              EntitySearchField(
-                label: "Comic (optional)", kind: .work, selected: $input.workId,
-                create: { creating = .init(kind: .work, initialTitle: $0) })
+      VStack(spacing: 0) {
+        SheetHeading((request.entity == nil ? "New " : "Edit ") + kindName(request.kind))
+        Form {
+          if input.kind == .author {
+            Section("Name") {
+              TextField("Name", text: $input.title).labelsHidden().textFieldStyle(.plain)
+                .multilineTextAlignment(.leading).frame(maxWidth: .infinity, minHeight: 32)
+                .fullFieldFocus()
             }
-          }
-        }
-        if input.kind != .storageRoot {
-          Section("Tags & Visibility") {
-            TagTokenPicker(selected: $input.tagIds)
-            Toggle("NSFW · hide by default", isOn: $input.nsfw)
-          }
-          Section("Source Links") {
-            SourceLinksEditor(links: $input.sources)
-          }
-        }
-        if input.kind == .chapter, let chapter = request.entity {
-          Section("Chapter Content") {
-            ForEach(input.media) { version in
-              HStack {
-                Label(
-                  version.language,
-                  systemImage: version.kind == "video" ? "play.rectangle" : "photo.stack")
-                Spacer()
-                Text("\(version.pageCount) pages").foregroundStyle(.secondary)
-              }
-            }
-            Button("Page Order…", systemImage: "square.grid.3x3") { pageOverview = true }
-            if !chapter.media.isEmpty {
+            Section("External source links (optional)") { SourceLinksEditor(links: $input.sources) }
+          } else if input.kind == .storageRoot {
+            Section("Destination") { TextField("Name", text: $input.title).fullFieldFocus() }
+            Section {
               Text(
-                "Save reading order here. File organization is reviewed and committed separately."
+                "Add a local folder or SMB connection after saving. Destinations are created only here, never during import."
+              ).font(.callout).foregroundStyle(.secondary)
+            }
+          } else {
+            Section("Title & Description") {
+              Picker("Text language", selection: $textLanguage) {
+                ForEach(contentLanguages, id: \.code) { Text($0.name).tag($0.code) }
+              }
+              HStack {
+                TextField("Title", text: title).fullFieldFocus()
+                Button("Translate Title", systemImage: "character.bubble") {
+                  translate(field: "title")
+                }
+                .labelStyle(.iconOnly).disabled(translating)
+              }
+              HStack(alignment: .top) {
+                TextEditor(text: description).scrollContentBackground(.hidden).frame(minHeight: 95)
+                  .fullFieldFocus()
+                Button("Translate Description", systemImage: "character.bubble") {
+                  translate(field: "description")
+                }.labelStyle(.iconOnly).disabled(translating)
+              }
+              Text(
+                "Missing translations use the original text. Translating text keeps the same comic pages."
               ).font(.caption).foregroundStyle(.secondary)
             }
           }
-        }
-        if !status.isEmpty { Section { Text(status).font(.callout).foregroundStyle(.secondary) } }
-      }.formStyle(.grouped).navigationTitle(
-        (request.entity == nil ? "New " : "Edit ") + kindName(request.kind)
-      )
+          if ![EntityKind.author, .tag, .storageRoot].contains(input.kind) {
+            Section("Collection") {
+              EntitySearchField(
+                label: "Search authors", kind: .author, selected: $input.authorId,
+                create: { creating = .init(kind: .author, initialTitle: $0) })
+              EntitySearchField(
+                label: "Series (optional)", kind: .series, selected: $input.seriesId,
+                create: { creating = .init(kind: .series, initialTitle: $0) })
+              if input.kind == .chapter {
+                EntitySearchField(
+                  label: "Comic (optional)", kind: .work, selected: $input.workId,
+                  create: { creating = .init(kind: .work, initialTitle: $0) })
+              }
+            }
+          }
+          if ![EntityKind.author, .storageRoot].contains(input.kind) {
+            Section("Tags & Visibility") {
+              TagTokenPicker(selected: $input.tagIds)
+              Toggle("NSFW · hide by default", isOn: $input.nsfw)
+            }
+            Section("Source Links") {
+              SourceLinksEditor(links: $input.sources)
+            }
+          }
+          if input.kind == .chapter, let chapter = request.entity {
+            Section("Chapter Content") {
+              ForEach(input.media) { version in
+                HStack {
+                  Label(
+                    version.languageLabel,
+                    systemImage: version.kind == "video" ? "play.rectangle" : "photo.stack")
+                  Spacer()
+                  #if os(macOS)
+                    Picker("Media language", selection: mediaLanguageBinding(version)) {
+                      if !mediaLanguages.contains(where: { $0.code == version.language }) {
+                        Text(version.languageLabel).tag(version.language)
+                      }
+                      ForEach(mediaLanguages, id: \.code) { language in
+                        Text(language.name).tag(language.code).disabled(
+                          input.media.contains {
+                            $0.id != version.id
+                              && $0.language.lowercased() == language.code.lowercased()
+                          })
+                      }
+                    }.labelsHidden().pickerStyle(.menu)
+                      .accessibilityLabel("Media language · " + version.languageLabel)
+                      .disabled(saving || translating)
+                  #endif
+                  Text("\(version.pageCount) pages").foregroundStyle(.secondary)
+                }
+              }
+              Button("Page Order…", systemImage: "square.grid.3x3") { pageOverview = true }
+              if !chapter.media.isEmpty {
+                Text(
+                  "Changing a media language opens a file commit review. Text translations keep their own language."
+                ).font(.caption).foregroundStyle(.secondary)
+              }
+            }
+          }
+          if !status.isEmpty { Section { Text(status).font(.callout).foregroundStyle(.secondary) } }
+        }.formStyle(.grouped)
+      }
+      .navigationTitle("")
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") { dismiss() }.disabled(saving || translating)
@@ -357,9 +424,37 @@ struct MetadataEditor: View {
       ).environmentObject(library).environmentObject(session)
     }
     #if os(macOS)
-      .frame(width: 660, height: 720)
+      .sheet(item: $mediaLanguageReview) { review in
+        MediaLanguageCommitScreen(review: review) { updated in
+          input = updated.input
+          editingRevision = updated.revision
+          status = "Media language updated."
+          mediaLanguageReview = nil
+        }.environmentObject(library)
+      }
+      .frame(
+        width: request.kind == .author ? 500 : request.kind == .storageRoot ? 460 : 660,
+        height: request.kind == .author ? 460 : request.kind == .storageRoot ? 320 : 720)
     #endif
   }
+  #if os(macOS)
+    private func mediaLanguageBinding(_ version: MediaVersion) -> Binding<String> {
+      Binding(
+        get: { version.language },
+        set: { language in
+          guard language != version.language else { return }
+          do {
+            guard let current = try currentForSave() else { return }
+            var metadata = cleanedInput
+            metadata.media = current.media
+            mediaLanguageReview = MediaLanguageReview(
+              chapter: current,
+              plan: try MediaLanguageChangePlan(
+                metadata: metadata, mediaId: version.id, language: language))
+          } catch { status = error.localizedDescription }
+        })
+    }
+  #endif
   private func localizedField(title: Bool) -> Binding<String> {
     Binding(
       get: {
@@ -386,6 +481,9 @@ struct MetadataEditor: View {
   }
   private var cleanedInput: MetadataInput {
     var value = input
+    if value.kind == .author {
+      value.title = value.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     value.sources.removeAll { $0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     return value
   }
@@ -473,4 +571,27 @@ func kindName(_ kind: EntityKind) -> String {
   case .storageRoot: "Storage Location"
   default: kind.rawValue.capitalized
   }
+}
+
+struct SheetHeading: View {
+  let title: String
+  var inset: CGFloat = 20
+  init(_ title: String, inset: CGFloat = 20) {
+    self.title = title
+    self.inset = inset
+  }
+  var body: some View {
+    Text(title).font(.system(size: 23, weight: .semibold))
+      .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, inset)
+      .padding(.top, 18).padding(.bottom, 6)
+  }
+}
+private struct FullFieldFocus: ViewModifier {
+  @FocusState private var focused: Bool
+  func body(content: Content) -> some View {
+    content.focused($focused).contentShape(Rectangle()).onTapGesture { focused = true }
+  }
+}
+extension View {
+  func fullFieldFocus() -> some View { modifier(FullFieldFocus()) }
 }

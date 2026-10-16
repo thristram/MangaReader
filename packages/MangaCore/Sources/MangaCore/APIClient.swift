@@ -7,9 +7,13 @@ public struct APIError: Error, LocalizedError, Sendable {
 }
 public actor APIClient {
   private let base: URL
+  private let transport: URLSession
   private let token: @Sendable () async throws -> String
-  public init(base: URL, token: @escaping @Sendable () async throws -> String) {
+  public init(
+    base: URL, transport: URLSession = .shared, token: @escaping @Sendable () async throws -> String
+  ) {
     self.base = base
+    self.transport = transport
     self.token = token
   }
   private func request<T: Decodable & Sendable>(
@@ -21,7 +25,7 @@ public actor APIClient {
     r.setValue("Bearer \(try await token())", forHTTPHeaderField: "Authorization")
     r.setValue("application/json", forHTTPHeaderField: "Content-Type")
     if let revision { r.setValue(String(revision), forHTTPHeaderField: "If-Match") }
-    let (data, response) = try await URLSession.shared.data(for: r)
+    let (data, response) = try await transport.data(for: r)
     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
     guard (200..<300).contains(status) else {
       let error = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
@@ -29,7 +33,7 @@ public actor APIClient {
       throw APIError(
         status: status, message: detail?["message"] as? String ?? "API request failed (\(status)).")
     }
-    return try JSONDecoder().decode(T.self, from: data)
+    return try JSONDecoder().decode(T.self, from: data.isEmpty ? Data("{}".utf8) : data)
   }
   public func me() async throws -> VerifiedAccount { try await request("v1/me") }
   public func snapshot() async throws -> SyncSnapshot { try await request("v1/sync") }
@@ -40,6 +44,11 @@ public actor APIClient {
     try await request(
       "v1/entities/\(entity.id)", method: "PUT", body: JSONEncoder().encode(input),
       revision: entity.revision)
+  }
+  public func delete(_ entity: LibraryEntity) async throws {
+    struct Acknowledgement: Decodable, Sendable {}
+    let _: Acknowledgement = try await request(
+      "v1/entities/\(entity.id)", method: "DELETE", revision: entity.revision)
   }
   public func state(_ input: StateInput, revision: Int) async throws -> PersonalState {
     try await request(

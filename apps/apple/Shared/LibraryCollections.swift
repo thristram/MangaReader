@@ -1,44 +1,55 @@
 import Charts
 import MangaCore
-import QuickLookThumbnailing
 import SwiftUI
 
 struct FileThumbnail: View {
   var url: URL?
   var symbol = "book.closed"
-  @State private var image: CGImage?
+  var contentMode: ContentMode = .fill
+  @StateObject private var thumbnail = ThumbnailPresentation()
   var body: some View {
-    ZStack {
-      Rectangle().fill(.quaternary)
-      if let image {
-        Image(decorative: image, scale: 1).resizable().scaledToFill()
-      } else {
-        Image(systemName: symbol).font(.system(size: 34, weight: .light)).foregroundStyle(.tertiary)
+    Color.clear.overlay {
+      GeometryReader { geometry in
+        ZStack {
+          if contentMode == .fill { Rectangle().fill(.quaternary) }
+          if let image = thumbnail.image {
+            Image(decorative: image, scale: 1).resizable().aspectRatio(contentMode: contentMode)
+              .frame(width: geometry.size.width, height: geometry.size.height, alignment: .center)
+          } else if thumbnail.loading {
+            ProgressView().controlSize(.small)
+          } else {
+            Image(systemName: symbol).font(.system(size: 34, weight: .light)).foregroundStyle(
+              .tertiary)
+          }
+        }.frame(width: geometry.size.width, height: geometry.size.height).clipped()
       }
-    }
-    .clipped()
-    .task(id: url) {
-      image = nil
-      guard let url else { return }
-      let request = QLThumbnailGenerator.Request(
-        fileAt: url, size: CGSize(width: 500, height: 700), scale: 2,
-        representationTypes: .thumbnail)
-      if let result = try? await QLThumbnailGenerator.shared.generateBestRepresentation(
-        for: request), !Task.isCancelled
-      {
-        image = result.cgImage
-      }
-    }
+    }.clipped()
+      .onDisappear { thumbnail.clear() }
+      .task(id: url) { await thumbnail.load(url) }
   }
 }
 struct MangaCover: View {
   let entity: LibraryEntity
   @EnvironmentObject private var library: LibraryUIModel
+  @State private var url: URL?
+  @State private var loading = true
   var body: some View {
-    FileThumbnail(
-      url: library.coverURL(entity), symbol: entity.kind == .series ? "square.stack" : "book.closed"
-    )
+    ZStack {
+      FileThumbnail(url: url, symbol: entity.kind == .series ? "square.stack" : "book.closed")
+      if loading { ProgressView().controlSize(.small) }
+    }
     .accessibilityLabel("Cover of " + library.title(entity))
+    .onDisappear {
+      url = nil
+      loading = false
+    }
+    .task(id: library.coverKey(entity)) {
+      loading = true
+      let result = await library.coverURL(entity)
+      guard !Task.isCancelled else { return }
+      url = result
+      loading = false
+    }
   }
 }
 struct ComicTile: View {
@@ -46,43 +57,48 @@ struct ComicTile: View {
   @EnvironmentObject private var library: LibraryUIModel
   @EnvironmentObject private var session: AppSession
   var body: some View {
-    VStack(alignment: .leading, spacing: 9) {
-      ZStack(alignment: .topTrailing) {
-        openControl {
-          MangaCover(entity: entity).aspectRatio(0.72, contentMode: .fit).clipShape(
-            RoundedRectangle(cornerRadius: 10))
+    openControl {
+      VStack(alignment: .leading, spacing: 9) {
+        MangaCover(entity: entity).aspectRatio(0.72, contentMode: .fit).clipShape(
+          RoundedRectangle(cornerRadius: 10))
+        Text(library.title(entity)).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+          .lineLimit(2, reservesSpace: true).frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.trailing, library.canManage ? 26 : 0)
+        Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        if let progress = library.state(entity.id)?.progress {
+          let total = entity.media.first { $0.id == progress.mediaId }?.pageCount ?? 1
+          ProgressView(
+            value: progress.completed ? 1 : Double(progress.pageIndex + 1) / Double(max(1, total))
+          ).tint(.pink)
+          Text(progress.completed ? "Read" : "Page \(progress.pageIndex + 1) of \(total)").font(
+            .caption2
+          ).foregroundStyle(.secondary)
         }
-        Button {
-          library.download(entity)
-        } label: {
-          Image(systemName: isDownloaded ? "checkmark" : "arrow.down").frame(width: 28, height: 28)
-        }.buttonStyle(.glass).clipShape(Circle()).padding(8)
-          .help("Download for offline reading").accessibilityLabel(
-            "Download " + library.title(entity))
-      }
-      HStack(alignment: .top, spacing: 4) {
-        openControl {
-          Text(library.title(entity)).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
-            .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+      }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+    }
+    .accessibilityLabel(library.title(entity))
+    // Controls are siblings of the open action, never nested buttons/links.
+    // Only the buttons intercept input; transparent layout space passes through.
+    .overlay(alignment: .topTrailing) {
+      GeometryReader { geometry in
+        VStack(spacing: 9) {
+          Color.clear.frame(height: geometry.size.width / 0.72).allowsHitTesting(false)
+            .overlay(alignment: .topTrailing) {
+              ComicDownloadButton(entity: entity).padding(10)
+            }
+          if library.canManage {
+            HStack {
+              Spacer(minLength: 0)
+              Button("Edit", systemImage: "pencil") { library.edit(entity) }.labelStyle(.iconOnly)
+                .buttonStyle(.plain).foregroundStyle(.secondary).frame(
+                  width: 22, height: 18, alignment: .topTrailing
+                )
+                .help("Edit " + library.title(entity)).accessibilityLabel(
+                  "Edit " + library.title(entity))
+            }
+          }
+          Spacer(minLength: 0)
         }
-        if library.canManage {
-          Button("Edit", systemImage: "pencil") { library.edit(entity) }.labelStyle(.iconOnly)
-            .buttonStyle(.plain).foregroundStyle(.secondary).frame(
-              width: 22, height: 18, alignment: .topTrailing
-            )
-            .help("Edit " + library.title(entity)).accessibilityLabel(
-              "Edit " + library.title(entity))
-        }
-      }
-      Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-      if let progress = library.state(entity.id)?.progress {
-        let total = entity.media.first { $0.id == progress.mediaId }?.pageCount ?? 1
-        ProgressView(
-          value: progress.completed ? 1 : Double(progress.pageIndex + 1) / Double(max(1, total))
-        ).tint(.pink)
-        Text(progress.completed ? "Read" : "Page \(progress.pageIndex + 1) of \(total)").font(
-          .caption2
-        ).foregroundStyle(.secondary)
       }
     }
     .contextMenu {
@@ -94,6 +110,12 @@ struct ComicTile: View {
       Button("Star", systemImage: "star", action: { library.mark(entity, starred: true) })
       if library.canManage {
         Button("Edit", systemImage: "pencil", action: { library.edit(entity) })
+        if [.work, .chapter].contains(entity.kind) {
+          Button(entity.kind == .chapter ? "Delete Chapter" : "Delete Comic", role: .destructive) {
+            library.requestDeletion(entity)
+          }.disabled(
+            library.deletingComic)
+        }
       }
     }
     .accessibilityElement(children: .contain)
@@ -111,7 +133,7 @@ struct ComicTile: View {
       NavigationLink(value: LibraryRoute.entity(entity.id)) { content() }.buttonStyle(.plain)
     }
   }
-  private var isDownloaded: Bool { entity.media.contains { library.smb.downloadedURLs($0) != nil } }
+  private var isDownloaded: Bool { library.isDownloaded(entity) }
   private var subtitle: String {
     if entity.kind == .chapter {
       let media = entity.preferredMedia(AppConfiguration.preferredLanguage)
@@ -150,6 +172,7 @@ struct CollectionFilters: View {
     VStack(alignment: .leading, spacing: 14) {
       HStack {
         Text("\(library.collection(page).count) items").font(.callout).foregroundStyle(.secondary)
+        #if os(macOS)
         Spacer()
         Menu {
           Picker("Sort by", selection: $library.sort) {
@@ -159,7 +182,9 @@ struct CollectionFilters: View {
         } label: {
           Label(library.sort.rawValue, systemImage: "line.3.horizontal.decrease")
         }.menuStyle(.borderlessButton)
+        #endif
       }
+      #if os(macOS)
       ScrollView(.horizontal, showsIndicators: false) {
         HStack(spacing: 8) {
           Button("All") {
@@ -177,6 +202,7 @@ struct CollectionFilters: View {
           }
         }.controlSize(.small)
       }
+      #endif
     }
   }
 }
@@ -196,6 +222,12 @@ struct ComicCollectionScreen: View {
       }.padding(contentPadding)
     }
     .refreshable { try? await session.synchronize() }
+    #if os(iOS)
+      .toolbar {
+        ToolbarItem(placement: .topBarTrailing) { PhoneCollectionFilterButton() }
+          .sharedBackgroundVisibility(.hidden)
+      }
+    #endif
     .overlay(alignment: .bottom) {
       if library.opening {
         Label {
@@ -295,6 +327,17 @@ struct EntityCollectionScreen: View {
             if library.canManage {
               Button("Edit", systemImage: "pencil") { library.edit(entity) }.labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
+              if [.work, .chapter, .author].contains(entity.kind) {
+                Button(
+                  entity.kind == .author
+                    ? "Delete Author" : entity.kind == .chapter ? "Delete Chapter" : "Delete Comic",
+                  systemImage: "trash",
+                  role: .destructive
+                ) {
+                  library.requestDeletion(entity)
+                }
+                .labelStyle(.iconOnly).buttonStyle(.borderless).disabled(library.deletingComic)
+              }
             }
           }.controlSize(.regular)
           if !entity.description(in: AppConfiguration.preferredLanguage).isEmpty {
@@ -332,11 +375,22 @@ struct EntityCollectionScreen: View {
 }
 struct AuthorsScreen: View {
   @EnvironmentObject private var library: LibraryUIModel
+  @State private var expanded: Set<String> = []
   var body: some View {
     ScrollView {
       LazyVStack(spacing: 0) {
         ForEach(library.collection(.authors)) { author in
           HStack(spacing: 16) {
+            Button {
+              if expanded.contains(author.id) {
+                expanded.remove(author.id)
+              } else {
+                expanded.insert(author.id)
+              }
+            } label: {
+              Image(systemName: expanded.contains(author.id) ? "chevron.down" : "chevron.right")
+                .frame(width: 28, height: 32).contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityLabel("Show comics by " + library.title(author))
             NavigationLink(value: LibraryRoute.entity(author.id)) {
               HStack(spacing: 14) {
                 Image(systemName: "person.crop.circle.fill").font(.system(size: 45))
@@ -359,8 +413,27 @@ struct AuthorsScreen: View {
               Button("Edit Author", systemImage: "pencil") { library.edit(author) }.labelStyle(
                 .iconOnly
               ).buttonStyle(.borderless)
+              Button("Delete Author", systemImage: "trash", role: .destructive) {
+                library.requestDeletion(author)
+              }.labelStyle(.iconOnly).buttonStyle(.borderless).disabled(library.deletingComic)
             }
           }.padding(.vertical, 18)
+            .contextMenu {
+              if library.canManage {
+                Button("Edit Author", systemImage: "pencil") { library.edit(author) }
+                Button("Delete Author", systemImage: "trash", role: .destructive) {
+                  library.requestDeletion(author)
+                }
+              }
+            }
+          if expanded.contains(author.id) {
+            let comics = library.authorPreviews(author)
+            if comics.isEmpty {
+              Text("No comics yet").foregroundStyle(.secondary).padding(.vertical, 16)
+            } else {
+              ComicGrid(entities: comics).padding(.top, 8).padding(.bottom, 24)
+            }
+          }
           Divider()
         }
         if library.collection(.authors).isEmpty {
@@ -376,31 +449,162 @@ struct AuthorsScreen: View {
 }
 struct TagsScreen: View {
   @EnvironmentObject private var library: LibraryUIModel
+  @EnvironmentObject private var session: AppSession
+  @State private var creating = false
+  @State private var newName = ""
+  @State private var saving = false
+  @FocusState private var newFocused: Bool
   var body: some View {
-    List {
-      ForEach(library.collection(.tags)) { tag in
-        HStack {
-          NavigationLink(value: LibraryRoute.entity(tag.id)) {
-            HStack(spacing: 12) {
-              Circle().fill(tag.nsfw ? .orange : .pink).frame(width: 10, height: 10)
-              Text(library.title(tag))
+    ScrollView {
+      LazyVGrid(
+        columns: [GridItem(.adaptive(minimum: 180, maximum: 260), spacing: 24)], spacing: 28
+      ) {
+        if creating {
+          VStack(alignment: .leading, spacing: 12) {
+            Image(systemName: "tag").font(.largeTitle).frame(maxWidth: .infinity, minHeight: 120)
+              .foregroundStyle(.pink)
+            TextField("Tag name", text: $newName).textFieldStyle(.roundedBorder).focused(
+              $newFocused
+            ).contentShape(Rectangle()).onTapGesture { newFocused = true }.onSubmit(create)
+            HStack {
+              Button("Cancel") { creating = false }
               Spacer()
-              Text("\(library.children(tag).count)").foregroundStyle(.secondary)
+              Button("Create", action: create).disabled(
+                saving || newName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-          }
-          if library.canManage {
-            Button("Edit Tag", systemImage: "pencil") { library.edit(tag) }.labelStyle(.iconOnly)
-              .buttonStyle(.borderless)
-          }
-        }.padding(.vertical, 6)
-      }
-      if library.collection(.tags).isEmpty {
+          }.padding(14).background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+        }
+        ForEach(library.collection(.tags)) { tag in TagCollectionTile(tag: tag) }
+      }.padding(contentPadding)
+      if !creating && library.collection(.tags).isEmpty {
         ContentUnavailableView(
           "No tags yet", systemImage: "tag",
-          description: Text("Tags are shared across your comics, series and chapters."))
+          description: Text("Create a tag to organize your comics.")
+        ).padding(.top, 40)
       }
     }.toolbar {
-      if library.canManage { Button("New Tag", systemImage: "plus") { library.create(.tag) } }
+      if library.canManage {
+        Button("New Tag", systemImage: "plus") {
+          newName = ""
+          creating = true
+          Task {
+            await Task.yield()
+            newFocused = true
+          }
+        }
+      }
+    }
+  }
+  private func create() {
+    let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty, !saving else { return }
+    saving = true
+    Task {
+      defer { saving = false }
+      do {
+        var input = MetadataInput(kind: .tag, title: name)
+        input.nsfw = name.lowercased() == "nsfw"
+        _ = try await session.create(input)
+        creating = false
+      } catch { library.show(error) }
+    }
+  }
+}
+struct TagCollectionTile: View {
+  let tag: LibraryEntity
+  @EnvironmentObject private var library: LibraryUIModel
+  @EnvironmentObject private var session: AppSession
+  @State private var editing = false
+  @State private var name = ""
+  @State private var revision = 0
+  @State private var saving = false
+  @State private var deleting = false
+  @FocusState private var focused: Bool
+  private var comics: [LibraryEntity] { library.taggedComics(tag) }
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      NavigationLink(value: LibraryRoute.entity(tag.id)) {
+        ZStack {
+          if comics.isEmpty {
+            RoundedRectangle(cornerRadius: 10).fill(.quaternary)
+            Image(systemName: "tag").font(.largeTitle).foregroundStyle(.pink)
+          }
+          ForEach(Array(comics.prefix(3).enumerated()).reversed(), id: \.element.id) {
+            index, comic in
+            MangaCover(entity: comic).aspectRatio(0.72, contentMode: .fit).clipShape(
+              RoundedRectangle(cornerRadius: 10)
+            )
+            .padding(.trailing, 20).padding(.top, 16).offset(
+              x: CGFloat(index) * 8, y: -CGFloat(index) * 7)
+          }
+        }.aspectRatio(0.78, contentMode: .fit).contentShape(Rectangle())
+      }.buttonStyle(.plain)
+      HStack(alignment: .center) {
+        if editing {
+          TextField("Tag name", text: $name).textFieldStyle(.roundedBorder).focused($focused)
+            .contentShape(Rectangle()).onTapGesture { focused = true }.onSubmit(save).disabled(
+              saving)
+        } else {
+          Text(tag.title).font(.headline).lineLimit(1)
+        }
+        Spacer(minLength: 4)
+        if library.canManage {
+          Button {
+            if editing {
+              deleting = true
+            } else {
+              name = tag.title
+              revision = tag.revision
+              editing = true
+              Task {
+                await Task.yield()
+                focused = true
+              }
+            }
+          } label: {
+            Image(systemName: editing ? "trash" : "pencil")
+          }
+          .buttonStyle(.borderless).foregroundStyle(editing ? Color.pink : Color.secondary)
+          .accessibilityLabel((editing ? "Delete tag " : "Edit tag ") + tag.title).disabled(saving)
+        }
+      }
+      Text("\(comics.count) " + (comics.count == 1 ? "comic" : "comics")).font(.caption)
+        .foregroundStyle(.secondary)
+    }
+    .alert("Delete tag “\(tag.title)” ?", isPresented: $deleting) {
+      Button("Cancel", role: .cancel) {}
+      Button("Delete Tag", role: .destructive) {
+        saving = true
+        Task {
+          defer { saving = false }
+          do { try await session.deleteTag(tag) } catch { library.show(error) }
+        }
+      }
+    } message: {
+      Text("The tag will be removed from your comics. No comics or files will be deleted.")
+    }
+  }
+  private func save() {
+    let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !title.isEmpty, !saving else { return }
+    guard let current = session.entities.first(where: { $0.id == tag.id && !$0.deleted }),
+      current.revision == revision
+    else {
+      editing = false
+      library.show(
+        LoginError.server("This tag changed. Review the latest name before editing again."))
+      return
+    }
+    saving = true
+    Task {
+      defer { saving = false }
+      do {
+        var input = current.input
+        input.title = title
+        input.localizations = [:]
+        try await session.update(current, input: input)
+        editing = false
+      } catch { library.show(error) }
     }
   }
 }
@@ -412,32 +616,38 @@ struct SavedPagesScreen: View {
       $0.pageIndex != nil && ($0.favorite || $0.starred) && library.entity($0.entityId) != nil
     }
     ScrollView {
-      if bookmarks.isEmpty {
-        ContentUnavailableView(
-          "Save a favorite moment", systemImage: "photo.on.rectangle",
-          description: Text("Favorite or star a page while reading to return to it here."))
-      } else {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 20)], spacing: 24) {
-          ForEach(bookmarks) { bookmark in
-            if let chapter = library.entity(bookmark.entityId) {
-              Button {
-                library.open(chapter, page: bookmark.pageIndex)
-              } label: {
-                VStack(alignment: .leading, spacing: 8) {
-                  let source = library.pageSource(chapter, page: bookmark.pageIndex ?? 0)
-                  PagePreview(url: source.url, kind: source.kind, index: source.index).aspectRatio(
-                    0.72, contentMode: .fit
-                  ).clipShape(RoundedRectangle(cornerRadius: 8))
-                  Text(library.title(chapter)).font(.subheadline).lineLimit(1)
-                  Label(
-                    "Page \((bookmark.pageIndex ?? 0) + 1)",
-                    systemImage: bookmark.favorite ? "heart.fill" : "star.fill"
-                  ).font(.caption).foregroundStyle(.secondary)
-                }
-              }.buttonStyle(.plain)
-            }
+      SavedPageGrid(bookmarks: bookmarks).padding(contentPadding)
+    }
+  }
+}
+struct SavedPageGrid: View {
+  let bookmarks: [PersonalState]
+  @EnvironmentObject private var library: LibraryUIModel
+  var body: some View {
+    if bookmarks.isEmpty {
+      ContentUnavailableView(
+        "Save a favorite moment", systemImage: "photo.on.rectangle",
+        description: Text("Favorite or star a page while reading to return to it here."))
+    } else {
+      LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 20)], spacing: 24) {
+        ForEach(bookmarks) { bookmark in
+          if let chapter = library.entity(bookmark.entityId) {
+            Button {
+              library.open(chapter, page: bookmark.pageIndex)
+            } label: {
+              VStack(alignment: .leading, spacing: 8) {
+                ChapterPagePreview(chapter: chapter, page: bookmark.pageIndex ?? 0).aspectRatio(
+                  0.72, contentMode: .fit
+                ).clipShape(RoundedRectangle(cornerRadius: 8))
+                Text(library.title(chapter)).font(.subheadline).lineLimit(1)
+                Label(
+                  "Page \((bookmark.pageIndex ?? 0) + 1)",
+                  systemImage: bookmark.favorite ? "heart.fill" : "star.fill"
+                ).font(.caption).foregroundStyle(.secondary)
+              }
+            }.buttonStyle(.plain)
           }
-        }.padding(contentPadding)
+        }
       }
     }
   }
@@ -460,8 +670,8 @@ struct DownloadsScreen: View {
             }
             Spacer()
             if !activity.failed && !activity.completed {
-              ProgressView().controlSize(.small)
-              Button("Cancel", action: library.cancelDownload)
+              ProgressView(value: activity.progress).frame(width: 90)
+              Button("Cancel") { library.cancelDownload(activity.id) }
             }
             if activity.failed, let entity = library.entity(activity.id) {
               Button("Retry") { library.download(entity) }
@@ -557,5 +767,61 @@ struct SourceLinksView: View {
     case "ehentai": return URL(string: "https://e-hentai.org/g/" + escaped)
     default: return nil
     }
+  }
+}
+
+struct ComicDownloadButton: View {
+  let entity: LibraryEntity
+  @EnvironmentObject private var library: LibraryUIModel
+  private var activity: DownloadActivity? { library.downloadActivity(entity.id) }
+  private var running: Bool { activity.map { !$0.completed && !$0.failed } ?? false }
+  private var downloaded: Bool { library.isDownloaded(entity) }
+  var body: some View {
+    Button {
+      library.download(entity)
+    } label: {
+      ZStack {
+        Circle().fill(.pink)
+        if running {
+          DownloadPie(fraction: activity?.progress ?? 0).fill(.white.opacity(0.85)).padding(5)
+          Circle().strokeBorder(.white.opacity(0.5), lineWidth: 1.5).padding(5)
+        } else {
+          Image(
+            systemName: activity?.failed == true
+              ? "exclamationmark" : downloaded ? "checkmark" : "arrow.down"
+          )
+          .font(.system(size: 17, weight: .semibold)).foregroundStyle(.white)
+        }
+      }.frame(width: 34, height: 34).contentShape(Circle())
+    }.buttonStyle(.plain).disabled(running || (downloaded && activity?.failed != true))
+      .help(
+        activity?.failed == true
+          ? "Retry download" : running ? "Downloading" : "Download for offline reading"
+      )
+      .accessibilityLabel(
+        (activity?.failed == true ? "Retry download " : "Download ") + library.title(entity)
+      )
+      .accessibilityValue(
+        running
+          ? "\(Int((activity?.progress ?? 0) * 100)) percent"
+          : downloaded ? "Available offline" : "")
+  }
+}
+struct DownloadPie: Shape {
+  var fraction: Double
+  var animatableData: Double {
+    get { fraction }
+    set { fraction = newValue }
+  }
+  func path(in rect: CGRect) -> Path {
+    var path = Path()
+    let center = CGPoint(x: rect.midX, y: rect.midY)
+    path.move(to: center)
+    path.addArc(
+      center: center, radius: min(rect.width, rect.height) / 2,
+      startAngle: .degrees(-90), endAngle: .degrees(-90 + 360 * min(1, max(0, fraction))),
+      clockwise: false)
+    path.closeSubpath()
+    return path
   }
 }

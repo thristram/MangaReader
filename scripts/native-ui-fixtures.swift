@@ -11,6 +11,136 @@ import PDFKit
 #endif
 
 @MainActor enum NativeUIFixtures {
+  private static var records: [LibraryEntity] = []
+  private static var owner: VerifiedAccount?
+  private static var readingStates: [PersonalState] = []
+  static var rejectedDeleteIds = Set<String>()
+  static var failedRepliesAfterDelete = Set<String>()
+  static var lostRepliesAfterDelete = Set<String>()
+  static var rejectedUpdateIds = Set<String>()
+  static var validateHierarchy = false
+  private static func validHierarchy(_ input: MetadataInput) -> Bool {
+    if let seriesId = input.seriesId,
+      let series = records.first(where: { $0.id == seriesId }),
+      let author = series.authorId, author != input.authorId { return false }
+    if let workId = input.workId, let work = records.first(where: { $0.id == workId }),
+      work.authorId != input.authorId || work.seriesId != input.seriesId { return false }
+    return true
+  }
+  static func organizeLanguagePreview(session: AppSession, directory: URL) throws {
+    guard let index = session.entities.firstIndex(where: { $0.id == "c0-0" }) else { return }
+    let root = directory.appendingPathComponent("media")
+    for position in session.entities[index].media.indices {
+      let version = session.entities[index].media[position]
+      let folder = "Language Correction/Chapter/" + version.language
+      try FileManager.default.createDirectory(
+        at: root.appendingPathComponent(folder), withIntermediateDirectories: true)
+      let paths = try version.relativePaths.map { old in
+        let relative = folder + "/" + URL(fileURLWithPath: old).lastPathComponent
+        try Data(contentsOf: root.appendingPathComponent(old)).write(
+          to: root.appendingPathComponent(relative))
+        return relative
+      }
+      session.entities[index].media[position].relativePaths = paths
+    }
+    records = session.entities
+  }
+  static func makeSession(cacheRoot: URL) -> AppSession {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [FixtureAPIProtocol.self]
+    let api = APIClient(
+      base: URL(string: "https://native-fixtures.invalid")!,
+      transport: URLSession(configuration: configuration)
+    ) { "synthetic-token" }
+    return AppSession(cacheRoot: cacheRoot, apiClient: api)
+  }
+  static func response(_ request: URLRequest) throws -> (Int, Data) {
+    func encoded(_ entity: LibraryEntity) throws -> Data { try JSONEncoder().encode(entity) }
+    let id = request.url?.lastPathComponent ?? ""
+    if id == "sync", request.httpMethod == "GET" {
+      return (200, try JSONSerialization.data(withJSONObject: [
+        "schemaVersion": 1,
+        "entities": try JSONSerialization.jsonObject(with: JSONEncoder().encode(records)),
+        "states": try JSONSerialization.jsonObject(with: JSONEncoder().encode(readingStates)),
+      ]))
+    }
+    if request.httpMethod == "DELETE", let index = records.firstIndex(where: { $0.id == id }) {
+      guard !rejectedDeleteIds.contains(id) else { return (409, Data()) }
+      guard request.value(forHTTPHeaderField: "If-Match") == String(records[index].revision) else {
+        return (409, Data())
+      }
+      guard
+        !records.contains(where: {
+          !$0.deleted
+            && ($0.authorId == id || $0.seriesId == id || $0.workId == id || $0.tagIds.contains(id)
+              || $0.media.contains { $0.storageRootId == id })
+        })
+      else { return (409, Data()) }
+      records.remove(at: index)
+      return (
+        lostRepliesAfterDelete.contains(id)
+          ? -1001 : failedRepliesAfterDelete.contains(id) ? 500 : 204, Data()
+      )
+    }
+    if request.httpMethod == "PUT", id == "states" {
+      let input = try JSONDecoder().decode(StateInput.self, from: request.httpBody ?? Data())
+      let old = readingStates.first {
+        $0.entityId == input.entityId && $0.pageIndex == input.pageIndex
+      }
+      guard request.value(forHTTPHeaderField: "If-Match") == String(old?.revision ?? 0) else {
+        return (409, Data())
+      }
+      var json =
+        try JSONSerialization.jsonObject(with: JSONEncoder().encode(input)) as! [String: Any]
+      json["id"] = old?.id ?? UUID().uuidString
+      json["revision"] = (old?.revision ?? 0) + 1
+      json["updatedAt"] = "2026-10-14T00:00:00Z"
+      let data = try JSONSerialization.data(withJSONObject: json)
+      let state = try JSONDecoder().decode(PersonalState.self, from: data)
+      readingStates.removeAll { $0.id == state.id }
+      readingStates.append(state)
+      return (200, data)
+    }
+    if request.httpMethod == "PUT", let index = records.firstIndex(where: { $0.id == id }) {
+      guard !rejectedUpdateIds.contains(id) else { return (409, Data()) }
+      guard request.value(forHTTPHeaderField: "If-Match") == String(records[index].revision) else {
+        return (409, Data())
+      }
+      let input = try JSONDecoder().decode(MetadataInput.self, from: request.httpBody ?? Data())
+      if validateHierarchy && !validHierarchy(input) { return (422, Data()) }
+      records[index] = try record(id, input, revision: records[index].revision + 1)
+      return (200, try encoded(records[index]))
+    }
+    if request.httpMethod == "POST", id == "entities" {
+      let input = try JSONDecoder().decode(MetadataInput.self, from: request.httpBody ?? Data())
+      let entity = try record(UUID().uuidString, input, revision: 1)
+      records.append(entity)
+      return (200, try encoded(entity))
+    }
+    if id == "sync", let owner {
+      let json: [String: Any] = [
+        "schemaVersion": 1,
+        "owner": try JSONSerialization.jsonObject(with: JSONEncoder().encode(owner)),
+        "entities": try records.map { try JSONSerialization.jsonObject(with: encoded($0)) },
+        "states": try readingStates.map {
+          try JSONSerialization.jsonObject(with: JSONEncoder().encode($0))
+        },
+      ]
+      return (200, try JSONSerialization.data(withJSONObject: json))
+    }
+    return (404, Data())
+  }
+  private static func record(_ id: String, _ input: MetadataInput, revision: Int) throws
+    -> LibraryEntity
+  {
+    var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(input)) as! [String: Any]
+    json["id"] = id
+    json["revision"] = revision
+    json["deleted"] = false
+    json["updatedAt"] = "2026-10-14T00:00:00Z"
+    return try JSONDecoder().decode(
+      LibraryEntity.self, from: JSONSerialization.data(withJSONObject: json))
+  }
   static func seed(session: AppSession, directory: URL) throws -> LibraryUIModel {
     let media = directory.appendingPathComponent("media")
     try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
@@ -172,10 +302,14 @@ import PDFKit
     session.states = try JSONDecoder().decode(
       [PersonalState].self, from: JSONSerialization.data(withJSONObject: states))
     session.status = "Preview data · no server connection"
+    readingStates = session.states
+    records = session.entities
+    owner = session.account
     return library
   }
   static func drawPage(title: String, index: Int, page: Int, cover: Bool) throws -> Data {
-    let size = CGSize(width: 360, height: 510)
+    let size =
+      index == 0 && page == 0 ? CGSize(width: 1020, height: 360) : CGSize(width: 360, height: 510)
     #if os(macOS)
       let image = NSImage(size: size)
       image.lockFocus()
@@ -244,4 +378,41 @@ import PDFKit
         withAttributes: [.font: Font.systemFont(ofSize: 20), .foregroundColor: Color.black])
     }
   }
+}
+
+private final class FixtureAPIProtocol: URLProtocol, @unchecked Sendable {
+  override class func canInit(with request: URLRequest) -> Bool {
+    request.url?.host == "native-fixtures.invalid"
+  }
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+  override func startLoading() {
+    Task { @MainActor in
+      do {
+        var request = self.request
+        if request.httpBody == nil, let stream = request.httpBodyStream {
+          stream.open()
+          defer { stream.close() }
+          var data = Data()
+          var buffer = [UInt8](repeating: 0, count: 4096)
+          while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count <= 0 { break }
+            data.append(contentsOf: buffer.prefix(count))
+          }
+          request.httpBody = data
+        }
+        let (status, data) = try NativeUIFixtures.response(request)
+        if status < 0 {
+          client?.urlProtocol(self, didFailWithError: URLError(.timedOut))
+          return
+        }
+        let response = HTTPURLResponse(
+          url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if !data.isEmpty { client?.urlProtocol(self, didLoad: data) }
+        client?.urlProtocolDidFinishLoading(self)
+      } catch { client?.urlProtocol(self, didFailWithError: error) }
+    }
+  }
+  override func stopLoading() {}
 }

@@ -39,12 +39,15 @@ public struct MediaVersion: Codable, Sendable, Identifiable {
     self.pageCount = pageCount
   }
 }
-public extension MediaVersion {
+extension MediaVersion {
+  public var languageLabel: String { language == "zxx" ? "No text" : language.uppercased() }
   /// Canonical page -> source page. Explicit missing entries fall back to original media.
-  func sourcePage(at canonical: Int) -> Int? {
+  public func sourcePage(at canonical: Int) -> Int? {
     guard canonical >= 0 else { return nil }
     if let pageAlignment {
-      guard canonical < pageAlignment.count, let index = pageAlignment[canonical], index >= 0, index < pageCount else { return nil }
+      guard canonical < pageAlignment.count, let index = pageAlignment[canonical], index >= 0,
+        index < pageCount
+      else { return nil }
       return index
     }
     return canonical < pageCount ? canonical : nil
@@ -188,5 +191,81 @@ public enum Visibility {
       }
     }
     return !hidden(entity)
+  }
+}
+
+extension SourceLink {
+  public static let supportedSites = ["pixiv", "fanbox", "patreon", "ehentai"]
+  public static func nextUnusedSite(in links: [SourceLink]) -> String {
+    supportedSites.first { site in !links.contains { $0.site == site } } ?? supportedSites[0]
+  }
+}
+extension LibraryEntity {
+  public var isArchiveDestination: Bool {
+    kind == .storageRoot && !deleted
+      && description != LibraryDestinationIdentity.sourceOnlyDescription
+  }
+}
+
+public enum TagRemovalPlan {
+  public static func updates(for tagId: String, entities: [LibraryEntity]) -> [(
+    LibraryEntity, MetadataInput
+  )] {
+    entities.filter { !$0.deleted && $0.tagIds.contains(tagId) }.map { entity in
+      var input = entity.input
+      input.tagIds.removeAll { $0 == tagId }
+      return (entity, input)
+    }
+  }
+}
+
+public enum AuthorRemovalPlan {
+  /// Parents first, so each API write can validate the replacement hierarchy.
+  /// Media paths and personal state references are intentionally preserved.
+  public static func updates(
+    for author: LibraryEntity, replacement: String,
+    entities: [LibraryEntity]
+  ) -> [(LibraryEntity, MetadataInput)] {
+    guard author.kind == .author, !author.deleted, replacement != author.id else { return [] }
+    func rank(_ kind: EntityKind) -> Int {
+      switch kind {
+      case .series: 0
+      case .work: 1
+      case .chapter: 2
+      default: 3
+      }
+    }
+    return entities.filter { !$0.deleted && $0.authorId == author.id }
+      .sorted { rank($0.kind) == rank($1.kind) ? $0.id < $1.id : rank($0.kind) < rank($1.kind) }
+      .map { entity in
+        var input = entity.input
+        input.authorId = replacement
+        input.nsfw = input.nsfw || author.nsfw
+        // Removing inherited author tags must not expose previously hidden comics.
+        input.tagIds += author.tagIds.filter { !input.tagIds.contains($0) }
+        return (entity, input)
+      }
+  }
+}
+
+public enum ComicDeletionPlan {
+  public static func entities(for comic: LibraryEntity, in entities: [LibraryEntity])
+    -> [LibraryEntity]
+  {
+    guard [.work, .chapter].contains(comic.kind), !comic.deleted else { return [] }
+    if comic.kind == .chapter { return [comic] }
+    return entities.filter { !$0.deleted && $0.kind == .chapter && $0.workId == comic.id } + [comic]
+  }
+  public static func exclusivePaths(
+    _ media: MediaVersion, deleting ids: Set<String>, entities: [LibraryEntity]
+  ) -> [String] {
+    let shared = Set(
+      entities.filter { !$0.deleted && !ids.contains($0.id) }.flatMap { $0.media }
+        .filter { $0.storageRootId == media.storageRootId }.flatMap(\.relativePaths))
+    let normalized = Set(shared.map { $0.precomposedStringWithCanonicalMapping.lowercased() })
+    return media.relativePaths.filter {
+      !normalized.contains($0.precomposedStringWithCanonicalMapping.lowercased())
+        && $0.contains("/")
+    }
   }
 }

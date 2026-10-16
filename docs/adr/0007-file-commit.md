@@ -15,3 +15,13 @@ The initial mover implements a single same-volume atomic rename. Cross-volume/NA
 ## Consequences
 
 Editing title/author/text/tags alone does not move files. Failed imports must reconcile journal/current files/current revisions before retry. Cover renaming, new media-language directories, Finder tags and bulk reorganization remain staged file operations. The initial API does not execute arbitrary physical paths.
+
+## Application: media language corrections, 2026-10-14
+
+Changing an existing version's language in the chapter editor requires a commit
+review. The client reuses `FileCommit` with verified copy-before-commit, saving the
+desired language/path metadata in the existing recovery payload. Only after the
+revision-checked API update succeeds is the old language folder removed; shared
+sources remain available to other chapters. Existing Pending Organization
+reconciliation completes interrupted corrections. Text locale changes remain
+independent. A single-version chapter keeps its language-free folder.

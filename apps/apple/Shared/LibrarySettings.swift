@@ -33,6 +33,7 @@ struct LibrarySettingsScreen: View {
   @AppStorage("OllamaPrompt") private var prompt = OllamaTranslator.defaultPrompt
   @AppStorage("FinderFavoriteColor") private var favoriteColor = 6
   @AppStorage("FinderStarColor") private var starColor = 5
+  @State private var deletingDestination: LibraryEntity?
   @State private var connection: LibraryEntity?
   @State private var bindingRoot: LibraryEntity?
   @State private var choosingFolder = false
@@ -84,8 +85,8 @@ struct LibrarySettingsScreen: View {
         Section("Content") { Toggle("Show NSFW content", isOn: $showNSFW) }
       case .translation:
         Section("Local Ollama") {
-          TextField("Service URL", text: $host)
-          TextField("Model", text: $model)
+          TextField("Service URL", text: $host).fullFieldFocus()
+          TextField("Model", text: $model).fullFieldFocus()
           HStack {
             Button(testing ? "Connecting…" : "Test Connection", action: testOllama).disabled(
               testing)
@@ -100,8 +101,9 @@ struct LibrarySettingsScreen: View {
           }
         }
         Section("System Prompt") {
-          TextEditor(text: $prompt).scrollContentBackground(.hidden).font(.body).frame(
-            minHeight: 160)
+          TextEditor(text: $prompt).scrollContentBackground(.hidden).font(.body).fullFieldFocus()
+            .frame(
+              minHeight: 160)
           Button("Restore Default") { prompt = OllamaTranslator.defaultPrompt }
           Text(
             "Translate buttons use your preferred manga language and save text separately from media."
@@ -109,7 +111,7 @@ struct LibrarySettingsScreen: View {
         }
       case .connections, .storage:
         Section("Media Storage") {
-          ForEach(session.entities.filter { $0.kind == .storageRoot && !$0.deleted }) { root in
+          ForEach(session.entities.filter { $0.isArchiveDestination }) { root in
             VStack(alignment: .leading, spacing: 12) {
               Label(
                 root.title, systemImage: root.storageKind == "smb" ? "network" : "externaldrive"
@@ -122,18 +124,60 @@ struct LibrarySettingsScreen: View {
                   }
                 #endif
                 Button("SMB Connection…") { connection = root }
+                if library.canManage {
+                  Button("Delete Destination", role: .destructive) { deletingDestination = root }
+                }
               }.controlSize(.small)
               if let url = try? library.local.rootURL(root.id) {
                 Text(url.path).font(.caption).foregroundStyle(.secondary).lineLimit(2)
               }
             }.padding(.vertical, 6)
           }
-          if session.entities.filter({ $0.kind == .storageRoot && !$0.deleted }).isEmpty {
-            Text("Import a collection on your Mac to add its storage location.").foregroundStyle(
-              .secondary)
+          if session.entities.filter({ $0.isArchiveDestination }).isEmpty {
+            Text("Add a destination manually to choose where archived comics are stored.")
+              .foregroundStyle(
+                .secondary)
           }
           if library.canManage {
-            Button("New Storage Location", systemImage: "plus") { library.create(.storageRoot) }
+            Button("Add Destination", systemImage: "plus") { library.create(.storageRoot) }
+          }
+        }
+        if page == .connections {
+          let sources = session.entities.filter {
+            $0.kind == .storageRoot && !$0.deleted && !$0.isArchiveDestination
+          }
+          if !sources.isEmpty {
+            Section("Import Sources") {
+              ForEach(sources) { root in
+                VStack(alignment: .leading, spacing: 10) {
+                  Label(root.title, systemImage: "folder").font(.headline)
+                  HStack {
+                    #if os(macOS)
+                      Button("Connect Folder…") {
+                        bindingRoot = root
+                        choosingFolder = true
+                      }
+                    #endif
+                    Button("SMB Connection…") { connection = root }
+                    if library.canManage {
+                      Button("Use as Destination") {
+                        Task {
+                          do {
+                            var input = root.input
+                            input.description = ""
+                            try await session.update(root, input: input)
+                          } catch { library.show(error) }
+                        }
+                      }
+                    }
+                  }.controlSize(.small)
+                }.padding(.vertical, 6)
+              }
+              Text(
+                "Source connections keep comics readable in place. To archive here, choose Use as Destination and connect the matching folder."
+              )
+              .font(.caption).foregroundStyle(.secondary)
+            }
           }
         }
         Section {
@@ -192,6 +236,22 @@ struct LibrarySettingsScreen: View {
       }
     }
     .formStyle(.grouped)
+    .alert(
+      "Delete destination?",
+      isPresented: Binding(
+        get: { deletingDestination != nil }, set: { if !$0 { deletingDestination = nil } })
+    ) {
+      Button("Cancel", role: .cancel) { deletingDestination = nil }
+      Button("Delete Destination", role: .destructive) {
+        guard let root = deletingDestination else { return }
+        deletingDestination = nil
+        Task { do { try await session.removeDestination(root) } catch { library.show(error) } }
+      }
+    } message: {
+      Text(
+        "This removes the destination from the archive list. Existing comics and files are kept and can still be read."
+      )
+    }
     .sheet(item: $connection) { SMBConnectionScreen(root: $0).environmentObject(library) }
     .fileImporter(isPresented: $choosingFolder, allowedContentTypes: [.folder]) { result in
       do {
@@ -223,6 +283,7 @@ let contentLanguages = [
   (code: "zh", name: "中文"), (code: "en", name: "English"), (code: "ja", name: "日本語"),
   (code: "ko", name: "한국어"), (code: "und", name: "Unspecified"),
 ]
+let mediaLanguages = contentLanguages + [(code: "zxx", name: "No text")]
 let finderColors = [
   (value: 6, name: "Red"), (value: 7, name: "Orange"), (value: 5, name: "Yellow"),
   (value: 2, name: "Green"), (value: 4, name: "Blue"), (value: 3, name: "Purple"),
@@ -239,43 +300,73 @@ struct SMBConnectionScreen: View {
   @State private var username = ""
   @State private var password = ""
   @State private var error = ""
+  @State private var saving = false
+  @State private var initialize = false
+  @State private var progress = ""
   var body: some View {
     NavigationStack {
-      Form {
-        Section("NAS") {
-          TextField("Server · smb://nas.local", text: $server)
-          TextField("Share", text: $share)
-          TextField("Base folder (optional)", text: $base)
-        }
-        Section("Sign In") {
-          TextField("Username", text: $username)
-          SecureField("Password", text: $password)
-        }
-        Section {
-          Label("SMB3 encryption required", systemImage: "lock.shield")
-          Text("Credentials are saved only on this device.").font(.caption).foregroundStyle(
-            .secondary)
-        }
-        if !error.isEmpty { Section { Text(error).foregroundStyle(.red) } }
-      }.formStyle(.grouped).navigationTitle(root.title)
+      VStack(spacing: 0) {
+        SheetHeading(root.title)
+        Form {
+          Section("NAS") {
+            TextField("Server · smb://nas.local", text: $server).fullFieldFocus()
+            TextField("Share", text: $share).fullFieldFocus()
+            TextField("Base folder (optional)", text: $base).fullFieldFocus()
+          }
+          Section("Sign In") {
+            TextField("Username", text: $username).fullFieldFocus()
+            SecureField("Password", text: $password).fullFieldFocus()
+          }
+          Section {
+            Label("SMB3 encryption required", systemImage: "lock.shield")
+            #if os(macOS)
+              if root.isArchiveDestination && library.canManage {
+                Toggle("Initialize this folder as a destination", isOn: $initialize)
+                Text(
+                  "Choose this only for a new destination. Existing folders must match this library and destination."
+                )
+                .font(.caption).foregroundStyle(.secondary)
+              }
+            #else
+              Text("Use the same library folder initialized on your Mac.")
+                .font(.caption).foregroundStyle(.secondary)
+            #endif
+            Text("Credentials are saved only on this device.").font(.caption).foregroundStyle(
+              .secondary)
+          }
+          if saving { Section { ProgressView(progress) } }
+          if !error.isEmpty { Section { Text(error).foregroundStyle(.red) } }
+        }.formStyle(.grouped)
+          .autocorrectionDisabled()
+          #if os(iOS)
+            .textInputAutocapitalization(.never)
+          #endif
+      }.navigationTitle("")
         .toolbar {
           ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
           ToolbarItem(placement: .confirmationAction) {
-            Button("Save Connection") {
-              do {
-                try library.smb.configure(
-                  rootId: root.id,
-                  connection: .init(
-                    server: server, share: share, basePath: base, username: username,
-                    password: password, encrypted: true))
-                dismiss()
-              } catch { self.error = error.localizedDescription }
-            }.disabled(share.isEmpty || username.isEmpty)
+            Button(saving ? "Connecting…" : "Save Connection") {
+              saving = true
+              error = ""
+              progress = SMBConnectionStage.connecting.rawValue + "…"
+              Task {
+                defer { saving = false }
+                do {
+                  try await library.smb.configureValidated(
+                    root: root,
+                    connection: .init(
+                      server: server, share: share, basePath: base, username: username,
+                      password: password, encrypted: true), initialize: initialize,
+                    onProgress: { progress = $0 })
+                  dismiss()
+                } catch { self.error = error.localizedDescription }
+              }
+            }.disabled(share.isEmpty || username.isEmpty || saving)
           }
         }
     }
     #if os(macOS)
-      .frame(width: 560, height: 510)
+      .frame(width: 560, height: 620)
     #endif
     .onAppear {
       if let connection = try? library.smb.connection(rootId: root.id) {
