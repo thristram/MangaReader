@@ -30,7 +30,15 @@ struct MangaRootScreen: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .environmentObject(library).environmentObject(session).tint(.pink)
-    .onChange(of: session.account?.ownerId) { _, _ in library.reset() }
+    #if os(macOS)
+      .task(id: session.account?.ownerId) { await library.translationQueue.restore() }
+    #endif
+    .onChange(of: session.account?.ownerId) { _, _ in
+      library.reset()
+      #if os(macOS)
+        Task { await library.translationQueue.restore() }
+      #endif
+    }
     .onChange(of: showNSFW) { _, _ in library.visibilityChanged() }
     .onChange(of: session.metadataGeneration) { _, _ in
       library.visibilityChanged()
@@ -118,6 +126,7 @@ struct WelcomeScreen: View {
     @EnvironmentObject private var library: LibraryUIModel
     @EnvironmentObject private var session: AppSession
     @State private var settingsExpanded = true
+    @State private var organizationExpanded = true
     var body: some View {
       NavigationSplitView {
         VStack(spacing: 0) {
@@ -127,7 +136,13 @@ struct WelcomeScreen: View {
             Section("Activity") { ForEach(LibraryPage.activityPages) { sidebarRow($0) } }
             if library.canManage {
               Section("Manage") {
-                ForEach([LibraryPage.importing, .organization, .storage]) { sidebarRow($0) }
+                sidebarRow(.importing)
+                DisclosureGroup(isExpanded: $organizationExpanded) {
+                  ForEach(LibraryPage.organizationPages) { sidebarRow($0) }
+                } label: {
+                  Label("Pending Organization", systemImage: LibraryPage.organization.symbol).font(.system(size: 15))
+                }
+                sidebarRow(.storage)
               }
             }
             Section {
@@ -189,6 +204,10 @@ struct WelcomeScreen: View {
       Label {
         HStack {
           Text(page.title)
+          if LibraryPage.organizationPages.contains(page) {
+            Spacer()
+            OrganizationSidebarStatus(page: page, fileQueue: library.fileQueue, translationQueue: library.translationQueue)
+          }
           if page == .downloads && library.activeDownloadCount > 0 {
             Spacer()
             Text("\(library.activeDownloadCount)").font(.caption.bold()).monospacedDigit()
@@ -312,6 +331,7 @@ struct LibraryDestination: View {
   }
 }
 struct LibraryPageScreen: View {
+  @EnvironmentObject private var library: LibraryUIModel
   let page: LibraryPage
   var body: some View {
     Group {
@@ -357,9 +377,21 @@ struct LibraryPageScreen: View {
         #else
           ContentUnavailableView("Import on your Mac", systemImage: "desktopcomputer")
         #endif
-      case .organization:
+      case .imageTranslation:
         #if os(macOS)
-          OrganizationScreen()
+          MangaImageTranslationSettingsScreen()
+        #else
+          ContentUnavailableView("Translate on your Mac", systemImage: "desktopcomputer")
+        #endif
+      case .translationQueue:
+        #if os(macOS)
+          MangaTranslationQueueScreen(queue: library.translationQueue)
+        #else
+          ContentUnavailableView("Translate on your Mac", systemImage: "desktopcomputer")
+        #endif
+      case .organization, .unorganized, .fileManagement, .commitHistory:
+        #if os(macOS)
+          OrganizationScreen(page: page)
         #else
           ContentUnavailableView("Organize on your Mac", systemImage: "desktopcomputer")
         #endif

@@ -11,6 +11,64 @@ import PDFKit
 #endif
 
 @MainActor enum NativeUIFixtures {
+  static func storageReferenceChecks(_ library: LibraryUIModel) async throws {
+    func check(_ value: @autoclosure () -> Bool, _ message: String) throws {
+      if !value() { throw NSError(domain: "StorageReferenceChecks", code: 1,
+                                  userInfo: [NSLocalizedDescriptionKey: message]) }
+    }
+    let chapter = library.session.entities.first { $0.id == "c0-0" }!
+    let original = chapter.media.first { $0.language == "ja" }!
+    let reference = await library.fileReference(original, page: 1)!
+    try check(reference.relativePath == original.relativePaths[1], "Info reports the wrong image file")
+    try check(reference.rootName == "Preview Collection" && reference.rootId == original.storageRootId,
+              "File reference loses storage-root identity")
+    try check(reference.localCopy != nil && reference.localCopy != reference.sourceLocation,
+              "Offline copy must be listed independently from its source")
+    #if os(macOS)
+      let root = try await library.local.readingRootURL(original.storageRootId)
+      try check(reference.sourceLocation == root.appendingPathComponent(original.relativePaths[1]).path,
+                "Mac file info does not include its bound physical root")
+    #endif
+    for kind in ["pdf", "video"] {
+      let media = MediaVersion(language: "ja", kind: kind, storageRootId: original.storageRootId,
+                               relativePaths: ["author/volume." + (kind == "pdf" ? "pdf" : "mp4")], pageCount: 40)
+      let file = await library.fileReference(media, page: 27)
+      try check(file?.relativePath == media.relativePaths[0], "PDF/video Info must use its single physical file")
+    }
+    var partial = chapter
+    var translation = original
+    translation.id = "reference-translation"
+    translation.language = "zh"
+    translation.pageAlignment = [0, nil]
+    partial.media = [original, translation]
+    let fallback = library.pageMedia(partial, preferred: translation, page: 1)!
+    let fallbackFile = await library.fileReference(fallback.media, page: fallback.index)
+    try check(fallbackFile?.relativePath == original.relativePaths[1], "Info ignores translation fallback")
+    var folders = chapter
+    folders.media = [MediaVersion(language: "ja", kind: "images", storageRootId: original.storageRootId,
+      relativePaths: ["author/ja/01.png", "author/ja/02.png", "author/appendix/01.png"], pageCount: 3),
+      MediaVersion(language: "zh", kind: "pdf", storageRootId: original.storageRootId,
+                   relativePaths: ["volume.pdf"], pageCount: 20)]
+    let locations = library.referencedFolders([folders])
+    try check(locations.count == 3 && Set(locations.map { $0.reference.relativePath }) == ["author/ja", "author/appendix", "."],
+              "Editor drops separate folders or repeats one row per image")
+    try check(locations.last?.label.hasSuffix("ZH") == true, "Editor loses translation labels")
+    let connection = SMBConnection(server: "smb://hidden:secret@nas.invalid:445/ignored?token=private#fragment",
+      share: "Personal", basePath: "Comics", username: "hidden", password: "secret", encrypted: true)
+    let smbPath = MediaStorageReference.smbLocation(connection, relativePath: "作者/01.png")
+    try check(smbPath == "smb://nas.invalid:445/Personal/Comics/作者/01.png", "SMB Info exposes credentials or loses share/base path")
+    let uncached = MediaVersion(language: "ja", kind: "images", storageRootId: original.storageRootId,
+      relativePaths: ["author/unmapped/01.png", "author/unmapped/02.png"], pageCount: 2)
+    do {
+      _ = try await library.smb.download(uncached, indices: [1])
+      throw NSError(domain: "StorageReferenceChecks", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unconfigured SMB unexpectedly opened"])
+    } catch let error as SMBRootNotConfigured {
+      try check(error.referencePath == uncached.relativePaths[1]
+        && error.rootName == "Preview Collection" && error.rootId == original.storageRootId,
+        "Missing SMB configuration error does not identify the requested file/root")
+    }
+    print("PASS: image/PDF/video reference paths; translation fallback; distinct editor folders; local source/offline copy; credential-free SMB path; missing SMB root identifies the requested file.")
+  }
   private static var records: [LibraryEntity] = []
   private static var owner: VerifiedAccount?
   private static var readingStates: [PersonalState] = []
@@ -18,6 +76,7 @@ import PDFKit
   static var failedRepliesAfterDelete = Set<String>()
   static var lostRepliesAfterDelete = Set<String>()
   static var rejectedUpdateIds = Set<String>()
+  static var heldSnapshot: Data?
   static var validateHierarchy = false
   private static func validHierarchy(_ input: MetadataInput) -> Bool {
     if let seriesId = input.seriesId,
@@ -58,6 +117,7 @@ import PDFKit
     func encoded(_ entity: LibraryEntity) throws -> Data { try JSONEncoder().encode(entity) }
     let id = request.url?.lastPathComponent ?? ""
     if id == "sync", request.httpMethod == "GET" {
+      if let heldSnapshot { return (200, heldSnapshot) }
       return (200, try JSONSerialization.data(withJSONObject: [
         "schemaVersion": 1,
         "entities": try JSONSerialization.jsonObject(with: JSONEncoder().encode(records)),

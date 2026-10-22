@@ -2,6 +2,14 @@
 
 The implemented contract is [OpenAPI 3.1](../packages/api-contract/openapi.json). Generate it with `npm run contract:generate` after changing server request validation. This document explains semantics that JSON Schema cannot express. The API is JSON metadata only, not a NAS/media proxy.
 
+Mac page batch editing uses the existing revision-checked chapter update. Splitting
+a translation changes image `relativePaths`, `pageCount` and `pageAlignment` and
+adds a new media ID; it does not create another chapter or duplicate localized text.
+Deleting a version removes its media entry instead of sending a zero-page version;
+an empty chapter media list is allowed. Physical move/Recycle operations remain
+device-side and journaled. No endpoint/schema migration is added. Existing personal
+state continues to address canonical page positions. See [batch edit semantics](apple/all-pages-batch-edit-2026-10-17.md).
+
 ## Authentication and account identity
 
 Send `Authorization: Bearer <access_token>`. The server checks signature/JWKS, configured canonical issuer, permanent Manga API audience, expiry, subject and operation scope. The native ID token's audience is the client ID; it must never be sent as the API bearer token.
@@ -96,3 +104,9 @@ Errors use `{"error":{"code":"conflict","message":"Reload current revision befor
 Additive optional response fields are compatible. Rename/removal or semantics changes require a new API/schema version, native decoder migration and tests. Keep text localization and media version identity separate in all migrations. The generated schema covers request/response shapes; relationship/ownership rules require integration tests.
 
 SwiftUI uses the existing schema v1 `pageAlignment` array as canonical-page → source-page mapping. A null/missing/out-of-range mapping uses original media; localized title/description fields remain separate. Reading progress and page marks store canonical positions. This UI rewrite adds no endpoint or database migration.
+
+Mac whole-media removal updates the chapter's existing `media` array; removing the final version sends `media: []` while retaining chapter metadata. Image additions use the same revision-checked update with appended physical paths/page counts/alignment. Chapter DELETE remains unchanged. Directory cleanup and source-file bookmarks are local file-journal details and are never API fields. No data migration is required.
+
+### Optional Mac image translation service
+
+Mac calls the user-configured manga-image-translator directly: `GET <base>/openapi.json` for route compatibility, then `POST <base>/translate/with-form/image` with multipart fields `image` (PNG) and `config` (upstream JSON). A successful response must be a readable rendered PNG. This is a separate service and receives no thristram-auth token. Ordinary chapter PUT media metadata records each completed canonical slot; partial versions use explicit `null` alignment slots. Source media/text metadata remains independent. The MangaReader server's public API and MongoDB schema are unchanged. See the [client contract](apple/manga-image-translation-2026-10-18.md).

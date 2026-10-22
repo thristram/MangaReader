@@ -23,6 +23,11 @@ with tempfile.TemporaryDirectory(prefix='generator-', dir=root / '.build') as di
     actual = {o['path'] for o in after.values() if o['isa'] == 'PBXFileReference' and o.get('path', '').endswith('.swift')}
     expected = {p.relative_to(app).as_posix() for p in app.rglob('*.swift') if '.build' not in p.relative_to(app).parts}
     assert actual == expected and 'Shared/LibraryShell.swift' in actual, 'source membership must work below .build'
+    expected_assets = {p.relative_to(app).as_posix() for p in app.rglob('*.xcassets')}
+    for target in [o for o in after.values() if o['isa'] == 'PBXNativeTarget']:
+        resources = next(after[p] for p in target['buildPhases'] if after[p]['isa'] == 'PBXResourcesBuildPhase')
+        actual_assets = {after[after[ref]['fileRef']]['path'] for ref in resources['files']}
+        assert actual_assets == expected_assets, 'asset catalogs must remain included in both targets'
     for key, original in before.items():
         if original['isa'] == 'XCBuildConfiguration':
             assert all(after[key]['buildSettings'].get(k) == v for k, v in original.get('buildSettings', {}).items()), 'existing build/signing settings changed'
@@ -31,4 +36,4 @@ with tempfile.TemporaryDirectory(prefix='generator-', dir=root / '.build') as di
     once = project.read_bytes()
     subprocess.run(['python3', str(fixture / 'scripts/generate-xcode-project.py')], check=True, stdout=subprocess.DEVNULL)
     assert once == project.read_bytes(), 'generator is not stable'
-print('PASS: SwiftUI source membership, stable generation, signing settings/schemes and both embedded-framework phases.')
+print('PASS: SwiftUI source and asset membership, stable generation, signing settings/schemes and both embedded-framework phases.')

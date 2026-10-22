@@ -9,6 +9,8 @@ struct PhoneReaderPager: UIViewControllerRepresentable {
   var rightToLeft = false
   var contentID: String
   var onTap: () -> Void = {}
+  var onDismiss: () -> Void = {}
+  var onDismissDrag: (CGFloat) -> Void = { _ in }
   var content: (Int) -> AnyView
 
   func makeUIViewController(context: Context) -> PhoneReaderPageController {
@@ -20,6 +22,8 @@ struct PhoneReaderPager: UIViewControllerRepresentable {
   private func update(_ controller: PhoneReaderPageController) {
     controller.onPageSettled = { if index != $0 { index = $0 } }
     controller.onCanvasTap = onTap
+    controller.onDismiss = onDismiss
+    controller.onDismissDrag = onDismissDrag
     controller.configure(index: index, count: count, rightToLeft: rightToLeft,
                          contentID: contentID, content: content)
   }
@@ -45,6 +49,9 @@ final class PhoneReaderPageController: UIViewController, UICollectionViewDataSou
   var transitioning: Bool { animating || collectionView.isDragging || collectionView.isDecelerating }
   var onPageSettled: ((Int) -> Void)?
   var onCanvasTap: (() -> Void)?
+  var onDismiss: (() -> Void)?
+  var onDismissDrag: ((CGFloat) -> Void)?
+  private lazy var dismissPan = UIPanGestureRecognizer(target: self, action: #selector(draggedDown(_:)))
   private lazy var canvasTap = UITapGestureRecognizer(target: self, action: #selector(tappedCanvas))
 
   override func viewDidLoad() {
@@ -64,6 +71,11 @@ final class PhoneReaderPageController: UIViewController, UICollectionViewDataSou
     collectionView.semanticContentAttribute = .forceLeftToRight
     collectionView.register(PhoneReaderCell.self, forCellWithReuseIdentifier: "page")
     view.addSubview(collectionView)
+    dismissPan.maximumNumberOfTouches = 1
+    dismissPan.delegate = self
+    collectionView.addGestureRecognizer(dismissPan)
+    collectionView.panGestureRecognizer.require(toFail: dismissPan)
+    collectionView.isDirectionalLockEnabled = true
     canvasTap.cancelsTouchesInView = false
     canvasTap.delegate = self
     collectionView.addGestureRecognizer(canvasTap)
@@ -83,6 +95,7 @@ final class PhoneReaderPageController: UIViewController, UICollectionViewDataSou
       collectionView.layoutIfNeeded()
       showRequestedPage(animated: false)
     }
+    restoreVisiblePages()
   }
   func position(for index: Int) -> Int { rightToLeft ? pageCount - 1 - index : index }
   private func canonical(_ position: Int) -> Int { rightToLeft ? pageCount - 1 - position : position }
@@ -98,6 +111,7 @@ final class PhoneReaderPageController: UIViewController, UICollectionViewDataSou
     requestedIndex = min(max(0, index), max(0, count - 1))
     if reload {
       animating = false
+      collectionView.visibleCells.compactMap { $0 as? PhoneReaderCell }.forEach { $0.detach() }
       cachedPages = [:]
       visibleIndex = requestedIndex
       collectionView.reloadData()
@@ -123,20 +137,48 @@ final class PhoneReaderPageController: UIViewController, UICollectionViewDataSou
     if !animating { visibleIndex = requestedIndex; pruneCache() }
   }
   private func pruneCache() {
-    cachedPages = cachedPages.filter { abs($0.key - visibleIndex) <= 1 }
+    // Keep any still-displayed transition cell, even when the settled index has
+    // moved. Evict other distant hosts as cells are created, not just on settle.
+    cachedPages = cachedPages.filter { abs($0.key - visibleIndex) <= 1 || $0.value.attachedCell != nil }
+  }
+  private func attach(_ cell: PhoneReaderCell, at indexPath: IndexPath) {
+    let index = canonical(indexPath.item)
+    guard index >= 0, index < pageCount, let content else { return }
+    let host = cachedPages[index] ?? PhoneReaderPageHost(index: index, content: content(index))
+    cachedPages[index] = host
+    cell.attach(host, to: self, gap: gap)
+  }
+  private func restoreVisiblePages() {
+    for case let cell as PhoneReaderCell in collectionView.visibleCells {
+      if let indexPath = collectionView.indexPath(for: cell) { attach(cell, at: indexPath) }
+    }
   }
   func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int { pageCount }
   func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
     let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "page", for: indexPath) as! PhoneReaderCell
-    let index = canonical(indexPath.item)
-    let host = cachedPages[index] ?? PhoneReaderPageHost(index: index, content: content!(index))
-    cachedPages[index] = host
-    cell.attach(host, to: self, gap: gap)
+    attach(cell, at: indexPath)
+    pruneCache()
     return cell
+  }
+  func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell,
+                      forItemAt indexPath: IndexPath) {
+    if let cell = cell as? PhoneReaderCell { attach(cell, at: indexPath) }
   }
   func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell,
                       forItemAt indexPath: IndexPath) {
-    (cell as? PhoneReaderCell)?.detach()
+    guard let cell = cell as? PhoneReaderCell, cell.pageIndex == canonical(indexPath.item) else { return }
+    let attachment = cell.attachment
+    // A recycled cell can already represent the same index in a newer display
+    // cycle. Wait until UIKit finishes updating its visible-cell bookkeeping.
+    Task { @MainActor [weak self, weak cell] in
+      guard let self, let cell, cell.attachment == attachment else { return }
+      if self.collectionView.visibleCells.contains(where: { $0 === cell }) {
+        self.restoreVisiblePages()
+        return
+      }
+      cell.detach()
+      self.pruneCache()
+    }
   }
   func scrollViewWillBeginDragging(_ scrollView: UIScrollView) { animating = false }
   func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
@@ -161,9 +203,37 @@ final class PhoneReaderPageController: UIViewController, UICollectionViewDataSou
       // Publish only settled pages; dragging back to the original page is a no-op.
       if next != previous { onPageSettled?(next) }
     }
+    restoreVisiblePages()
     pruneCache()
   }
   @objc private func tappedCanvas() { onCanvasTap?() }
+  var canDismissAtCurrentZoom: Bool {
+    func fitted(_ view: UIView) -> Bool {
+      if let viewport = view as? PhoneReadingViewport { return viewport.isAtMinimumZoom }
+      return view.subviews.allSatisfy(fitted)
+    }
+    return visibleHost.map { fitted($0.view) } ?? true
+  }
+  func shouldBeginDismissal(velocity: CGPoint) -> Bool {
+    velocity.y > 0 && velocity.y > abs(velocity.x) * 1.2 && !animating && !collectionView.isDecelerating && canDismissAtCurrentZoom
+  }
+  func updateDismissal(translation: CGPoint, velocity: CGPoint, state: UIGestureRecognizer.State) {
+    let distance = max(0, translation.y)
+    switch state {
+    case .began, .changed: onDismissDrag?(distance)
+    case .ended:
+      if distance > 100 || (distance > 35 && velocity.y > 900) { onDismiss?() }
+      else { onDismissDrag?(0) }
+    case .cancelled, .failed: onDismissDrag?(0)
+    default: break
+    }
+  }
+  @objc private func draggedDown(_ gesture: UIPanGestureRecognizer) {
+    updateDismissal(translation: gesture.translation(in: view), velocity: gesture.velocity(in: view), state: gesture.state)
+  }
+  func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+    gestureRecognizer !== dismissPan || shouldBeginDismissal(velocity: dismissPan.velocity(in: view))
+  }
   func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                          shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
     gestureRecognizer === canvasTap
@@ -173,11 +243,18 @@ final class PhoneReaderPageController: UIViewController, UICollectionViewDataSou
 
 final class PhoneReaderCell: UICollectionViewCell {
   private var host: PhoneReaderPageHost?
+  var pageIndex: Int? { host?.index }
+  private(set) var attachment = UUID()
   private var gap: CGFloat = 0
   func attach(_ host: PhoneReaderPageHost, to parent: UIViewController, gap: CGFloat) {
-    if self.host !== host {
+    if self.host !== host || host.view.superview !== contentView {
       detach()
+      // UIKit may request the same page before its old cell's end-display
+      // callback arrives. Transfer ownership before moving the hosting view.
+      host.attachedCell?.detach()
       self.host = host
+      attachment = UUID()
+      host.attachedCell = self
       parent.addChild(host)
       contentView.addSubview(host.view)
       host.didMove(toParent: parent)
@@ -186,10 +263,14 @@ final class PhoneReaderCell: UICollectionViewCell {
     setNeedsLayout()
   }
   func detach() {
-    host?.willMove(toParent: nil)
-    host?.view.removeFromSuperview()
-    host?.removeFromParent()
-    host = nil
+    guard let host else { return }
+    self.host = nil
+    attachment = UUID()
+    guard host.attachedCell === self else { return }
+    host.attachedCell = nil
+    host.willMove(toParent: nil)
+    host.view.removeFromSuperview()
+    host.removeFromParent()
   }
   override func prepareForReuse() { super.prepareForReuse(); detach() }
   override func layoutSubviews() {
@@ -200,6 +281,7 @@ final class PhoneReaderCell: UICollectionViewCell {
 
 final class PhoneReaderPageHost: UIHostingController<AnyView> {
   let index: Int
+  weak var attachedCell: PhoneReaderCell?
   init(index: Int, content: AnyView) {
     self.index = index
     super.init(rootView: content)

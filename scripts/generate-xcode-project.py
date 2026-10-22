@@ -7,8 +7,10 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]; APP=ROOT/'apps/apple'; PROJECT=APP/'MangaReader.xcodeproj'
 PROJECT.mkdir(exist_ok=True)
 existing_settings={}
+object_version="56"
 if (PROJECT/'project.pbxproj').exists():
  previous=json.loads(subprocess.check_output(['plutil','-convert','json','-o','-',str(PROJECT/'project.pbxproj')]))
+ object_version=previous.get('objectVersion','56')
  existing_settings={key:value.get('buildSettings',{}) for key,value in previous['objects'].items() if value['isa']=='XCBuildConfiguration'}
 def uid(name):return hashlib.sha1(name.encode()).hexdigest()[:24].upper()
 def q(v):return json.dumps(str(v))
@@ -23,6 +25,10 @@ files=[]
 for path in sorted(APP.glob('**/*.swift')):
  if '.build' in path.relative_to(APP).parts:continue
  relative=path.relative_to(APP).as_posix();ref=obj('file:'+relative,'PBXFileReference',lastKnownFileType='sourcecode.swift',path=relative,sourceTree='<group>');files.append((relative,ref))
+assets=[]
+for path in sorted(APP.glob('**/*.xcassets')):
+ if '.build' in path.relative_to(APP).parts:continue
+ relative=path.relative_to(APP).as_posix();ref=obj('asset:'+relative,'PBXFileReference',lastKnownFileType='folder.assetcatalog',path=relative,sourceTree='<group>');assets.append((relative,ref))
 config=obj('base','PBXFileReference',lastKnownFileType='text.xcconfig',path='Config/Base.xcconfig',sourceTree='<group>')
 serviceConfig=obj('service-config','PBXFileReference',lastKnownFileType='text.xcconfig',path='Config/Service.xcconfig',sourceTree='<group>')
 local=obj('core-package','XCLocalSwiftPackageReference',relativePath='../../packages/MangaCore')
@@ -39,7 +45,8 @@ for name,folder,sdk,bundle in [('MangaReaderMac','Mac','macosx','com.thristram.m
  # Xcode must copy it to the platform's Frameworks directory and sign that copy.
  embeddedSMB=obj('embed-framework:'+name,'PBXBuildFile',productRef=deps[1],settings={'ATTRIBUTES':['CodeSignOnCopy','RemoveHeadersOnCopy']})
  embedFrameworks=obj('embed-frameworks:'+name,'PBXCopyFilesBuildPhase',buildActionMask='2147483647',dstPath='',dstSubfolderSpec='10',files=[embeddedSMB],name='Embed Frameworks',runOnlyForDeploymentPostprocessing='0')
- resources=obj('resources:'+name,'PBXResourcesBuildPhase',buildActionMask='2147483647',files=[],runOnlyForDeploymentPostprocessing='0')
+ assetFiles=[obj('asset-build:'+name+':'+relative,'PBXBuildFile',fileRef=ref) for relative,ref in assets]
+ resources=obj('resources:'+name,'PBXResourcesBuildPhase',buildActionMask='2147483647',files=assetFiles,runOnlyForDeploymentPostprocessing='0')
  configs=[]
  for mode in ['Debug','Release']:
   settings={'PRODUCT_NAME':name,'PRODUCT_BUNDLE_IDENTIFIER':bundle,'SDKROOT':sdk,'SWIFT_VERSION':'5.0','GENERATE_INFOPLIST_FILE':'NO','INFOPLIST_FILE':'Config/Info-'+folder+'.plist','CODE_SIGN_STYLE':'Automatic','MARKETING_VERSION':'0.1.0','CURRENT_PROJECT_VERSION':'1','SWIFT_OPTIMIZATION_LEVEL':'-Onone' if mode=='Debug' else '-O','ENABLE_USER_SCRIPT_SANDBOXING':'YES','SWIFT_STRICT_CONCURRENCY':'targeted','ONLY_ACTIVE_ARCH':'YES' if mode=='Debug' else 'NO'}
@@ -59,10 +66,10 @@ for name,folder,sdk,bundle in [('MangaReaderMac','Mac','macosx','com.thristram.m
   (schemes/(name+'.xcscheme')).write_text(f'''<?xml version="1.0" encoding="UTF-8"?>
 <Scheme LastUpgradeVersion="2700" version="1.3"><BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES"><BuildActionEntries><BuildActionEntry buildForTesting="YES" buildForRunning="YES" buildForProfiling="YES" buildForArchiving="YES" buildForAnalyzing="YES"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="{target}" BuildableName="{name}.app" BlueprintName="{name}" ReferencedContainer="container:MangaReader.xcodeproj"/></BuildActionEntry></BuildActionEntries></BuildAction><LaunchAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" launchStyle="0" useCustomWorkingDirectory="NO" ignoresPersistentStateOnLaunch="NO" debugDocumentVersioning="YES" allowLocationSimulation="YES"><BuildableProductRunnable runnableDebuggingMode="0"><BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="{target}" BuildableName="{name}.app" BlueprintName="{name}" ReferencedContainer="container:MangaReader.xcodeproj"/></BuildableProductRunnable></LaunchAction><ProfileAction buildConfiguration="Release"/><AnalyzeAction buildConfiguration="Debug"/><ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES"/></Scheme>''')
 productsGroup=obj('products-group','PBXGroup',children=products,name='Products',sourceTree='<group>')
-main=obj('main-group','PBXGroup',children=[ref for _,ref in files]+[config,serviceConfig,productsGroup],sourceTree='<group>')
+main=obj('main-group','PBXGroup',children=[ref for _,ref in files]+[ref for _,ref in assets]+[config,serviceConfig,productsGroup],sourceTree='<group>')
 projectConfigs=[obj('project-config:'+mode,'XCBuildConfiguration',buildSettings={'CLANG_ENABLE_MODULES':'YES','CLANG_ENABLE_OBJC_ARC':'YES','SWIFT_VERSION':'5.0',**existing_settings.get(uid('project-config:'+mode),{})},name=mode) for mode in ['Debug','Release']]
 projectList=obj('project-config-list','XCConfigurationList',buildConfigurations=projectConfigs,defaultConfigurationIsVisible='0',defaultConfigurationName='Debug')
 project=obj('project','PBXProject',attributes={'LastUpgradeCheck':'2700'},buildConfigurationList=projectList,compatibilityVersion='Xcode 14.0',developmentRegion='en',hasScannedForEncodings='0',knownRegions=['en','Base'],mainGroup=main,packageReferences=[local,smb],productRefGroup=productsGroup,projectDirPath='',projectRoot='',targets=targets)
-(PROJECT/'project.pbxproj').write_text('// !$*UTF8*$!\n'+raw({'archiveVersion':'1','classes':{},'objectVersion':'56','objects':objects,'rootObject':project})+'\n')
+(PROJECT/'project.pbxproj').write_text('// !$*UTF8*$!\n'+raw({'archiveVersion':'1','classes':{},'objectVersion':object_version,'objects':objects,'rootObject':project})+'\n')
 with (APP/'Config/MangaReaderMac.entitlements').open('wb') as f:plistlib.dump({'com.apple.security.app-sandbox':True,'com.apple.security.network.client':True,'com.apple.security.files.user-selected.read-write':True,'com.apple.security.files.bookmarks.app-scope':True},f)
 print(PROJECT)

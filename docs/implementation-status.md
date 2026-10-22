@@ -32,7 +32,7 @@ Updated: 2026-10-14. This is a working native/server foundation, **not a complet
 - Durable offline metadata/state outbox, reconnect merge/conflict UI, incremental/transactional sync and fully offline relaunch; multi-document reference transactions.
 - Background/resumable/verified downloads, on-demand page/range reading, a persistent job queue/pause, content hashes and quota policy. Both apps currently stage whole preferred chapters through foreground transfers.
 - Configurable fit modes beyond default height filling, detailed historical reading sessions/page totals, distribution assets/signing, complete VoiceOver/Dynamic Type/Reduce Motion and physical-device gesture acceptance.
-- P1 Tailscale setup/reachability and manga-image-translator full-media worker.
+- P1 Tailscale setup/reachability. External manga-image-translator model/GPU/provider setup and real translation-quality acceptance remain outside the Mac HTTP client implementation.
 
 ## Verified vs configuration-dependent
 
@@ -46,3 +46,7 @@ Live ASWeb sign-in/refresh against production thristram-auth, real NAS interoper
 2. Complete safe file-plan/recovery and media alignment/cover/reorder flows before using bulk management on original collections.
 3. Add durable offline sync and download jobs, then finish approved UI details/reader gestures/statistics.
 4. Complete release validation and distribution prerequisites; implement P1 workers/network reachability separately.
+
+## Mac image translation (2026-10-18)
+
+Implemented: native service/default-option settings and route test; Edit Chapter confirmation; owner-scoped persisted serialized image/PDF page jobs; progressive aligned media/file commits; cached preview; retry/restart and file-journal recovery; four organization sidebar children, file-queue remove/reverse-order/status, and background history reads. Native synthetic integration tests pass, and the local port-8000 image API passed an actual connection/schema check. Real model quality/provider readiness has not been validated by synthetic responses. See [setup and acceptance scope](apple/manga-image-translation-2026-10-18.md).

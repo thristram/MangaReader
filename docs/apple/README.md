@@ -86,6 +86,21 @@ After source file additions/removals, run `python3 scripts/generate-xcode-projec
 
 See [UI spec](ui-spec.md), [Apple requirements](requirements.md), [Apple spec](spec.md), [implementation status](../implementation-status.md) and [mock](../mock/README.md).
 
+To inspect media storage, use Mac **Edit Comic / Edit Chapter → Referenced Folders**,
+or **Preview → … → Info** on either platform. iPhone **… → Chapter Description**
+opens the description separately. Unconfigured SMB errors include the root and
+file reference to compare with Connections. See [file locations and verification](media-references-2026-10-16.md).
+
+For add-only imports still in their source folders, use Mac **Pending Organization
+→ Not Yet Organized**, choose **Move to**, and click the row's **Move Files** button.
+Comics group their pending chapters in one row; standalone chapters have their own.
+See [one-click organization and recovery](pending-source-organization-2026-10-16.md).
+
+Mac **Preview → All Pages → Edit** adds click/range/rectangle selection with
+**Select All**, **Deselect All**, **Set as Translation** and **Delete**. Translation
+splits selected images into a new language of the same chapter, then shows Alignment
+and Commit reviews. Delete retains verified copies in Recycle. See [batch page editing](all-pages-batch-edit-2026-10-17.md).
+
 ## Native visual preview
 
 [UI verification](ui-verification.md) documents page coverage, screenshots and limits. `python3 scripts/preview-native-ui.py mac` or `phone` builds an isolated preview under `.build/native-ui-preview`. It copies public build configuration, excludes local overrides, uses a separate bundle/cache and synthetic media, and does not restore a real account. Open the generated Mac app, or run the generated Xcode project with the iPhone scheme. Use a locally available simulator destination; `--destination` can override the default. Never copy preview fixture entrypoints into real targets.
@@ -105,3 +120,10 @@ The same simulator checks assert the five native tab labels/order and equal visi
 [Correct an imported media language](media-language-corrections-2026-10-14.md) explains each version's Chapter Content dropdown, reviewed folder rename, conflict checks and recovery. The update uses existing API fields and requires no database migration.
 
 Mac/iPhone reader control updates, keyboard mapping and unified Mac video transport: [behavior and verification](reader-controls-2026-10-15.md).
+
+Rapid paging/collection stability, swipe-down dismissal and shared video scrubber: [behavior and regression checks](rapid-paging-scroll-and-video-2026-10-15.md).
+
+The October 16 update in that record also documents three authorized iPhone crash reports: disconnected SMB reads passed a negative buffer size to Foundation. Shared Mac/iPhone reads now validate and bound allocations, and cancelled cover-marker reads finish before connection teardown. Raw device diagnostics remain local and ignored.
+
+- [Chapter media editing: version/chapter folder deletion and adding images](chapter-media-editing-2026-10-17.md)
+- [Manga image translation setup, defaults, queue, previews and recovery](manga-image-translation-2026-10-18.md)

@@ -63,7 +63,7 @@ No online comic scraping, extension marketplace, hosted media upload or shared p
 | LNG-02 | One set of images/video/PDF can have multiple localized chapter/comic/series titles and descriptions. Partial translated text falls back to original text. No storage duplication or new media language folder. |
 | LNG-03 | Translate buttons appear only on comic detail and edit popup; one click translates title/description into preferred language, with no extra popup. Store/retranslate the locale; preserve original. Translations can be edited manually. |
 | LNG-04 | Mac calls the user's local Ollama host. Settings edit model URL/host, model, system prompt, preferred language and connections. A response is validated before saving. |
-| LNG-05 | P1 full media translation based on manga-image-translator runs a separate local worker. Review licensing and output alignment. |
+| LNG-05 | Mac translates image/PDF pages through a separately run manga-image-translator API. Configure/test its base URL and save upstream-compatible default options; confirm from Edit Chapter. Persist owner-scoped background jobs, attach/rendered pages in canonical alignment, organize files and expose progress/error/retry/previews under Translation Queue. |
 
 ## Reading, history and statistics
 
@@ -92,3 +92,7 @@ No online comic scraping, extension marketplace, hosted media upload or shared p
 | IOS-01 | iPhone is for browsing/reading, personal state and download management only. No source-file import, move/rename/reorg/commit; no author/comic/chapter/tag editing; no translation administration. |
 
 [Current implementation status](implementation-status.md) is tracked separately; an accepted requirement is not automatically implemented.
+
+## Organization queue navigation
+
+Mac Pending Organization contains Not Yet Organized (source group count), File Management Queue (reverse enqueue order, pending/error indicator, retry/remove failed entry), Translation Queue (chapter groups, page progress, description, failure reason, retry and preview), and Commit History.

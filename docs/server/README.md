@@ -71,3 +71,5 @@ See [server specification](spec.md), [requirements](requirements.md), [auth inte
 References: [Vercel Express](https://vercel.com/docs/frameworks/backend/express), [Better Auth OAuth Provider](https://better-auth.com/docs/plugins/oauth-provider), [MongoDB Node driver](https://www.mongodb.com/docs/drivers/node/current/).
 
 Latest live check: [deployment verification — 2026-10-13](deployment-verification-2026-10-13.md), including the reserved-entrypoint correction and database readiness findings.
+
+Mac manga image translation calls a separately configured GPU/image service directly. This metadata server requires no translator URL, provider credentials, new deployment settings or database migration. It stores normal media-version metadata after each successful page commit. See [Apple image translation setup](../apple/manga-image-translation-2026-10-18.md).

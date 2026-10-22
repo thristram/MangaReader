@@ -215,6 +215,20 @@ smb2_write_to_socket(struct smb2_context *smb2)
                 smb2_set_error(smb2, "trying to write but not connected");
                 return -1;
         }
+#ifdef SO_NOSIGPIPE
+        /* Darwin writev() raises a process-fatal SIGPIPE when the NAS closes
+         * while a queued/cancelled request is being written. Keep this local
+         * to the SMB socket so the caller receives an ordinary EPIPE error. */
+        {
+                int no_sigpipe = 1;
+                if (setsockopt(smb2->fd, SOL_SOCKET, SO_NOSIGPIPE,
+                               &no_sigpipe, sizeof(no_sigpipe)) < 0) {
+                        smb2_set_error(smb2, "Failed to configure SMB socket: %s",
+                                       strerror(errno));
+                        return -1;
+                }
+        }
+#endif
         while ((pdu = smb2->outqueue) != NULL) {
                 struct iovec iov[SMB2_MAX_VECTORS] _U_;
                 struct iovec *tmpiov;

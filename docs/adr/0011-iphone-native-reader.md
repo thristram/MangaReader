@@ -29,6 +29,14 @@ imply that remote media is already downloaded. Verify actual UIKit layout and
 state transitions with synthetic offline media; physical-device frame pacing is
 a separate acceptance check.
 
+Video output refinement, 2026-10-20: iPhone uses AVPlayerLayer directly as a UIKit
+view's backing layer within the page host. The reader already owns playback controls
+and full-screen presentation. This removes the nested AVPlayerViewController and
+its separate rendering layout from the initial collection-cell/SwiftUI presentation
+path. Layer bounds follow UIView bounds automatically; initial output is checked
+before interactive-dismissal gestures. Shared AVPlayer transport and Mac's
+AVPlayerView remain. See [rendering verification](../apple/rapid-paging-scroll-and-video-2026-10-15.md#iphone-output-layout-correction-2026-10-20).
+
 See [verification](../apple/iphone-reader-fit-and-paging-2026-10-14.md) and Apple's
 [UICollectionView](https://developer.apple.com/documentation/uikit/uicollectionview),
 [scroll inset behavior](https://developer.apple.com/documentation/uikit/uiscrollview/contentinsetadjustmentbehavior-swift.property)

@@ -30,6 +30,15 @@ import AMSMB2
     do { try await cancelled.value; fatalError("Cancelled network check must fail") }
     catch is CancellationError {}
     print("PASS: Network.framework reachability and cancellation.")
+    let disconnected = SMB2Manager(
+      url: URL(string: "smb://127.0.0.1:" + port)!,
+      credential: URLCredential(user: "synthetic", password: "synthetic", persistence: .none))!
+    let stream: AsyncThrowingStream<Data, any Error> = disconnected.contents(atPath: "synthetic", range: 0..<4096)
+    do {
+      for try await _ in stream { fatalError("Disconnected stream unexpectedly returned data") }
+      fatalError("Disconnected stream must finish with an error")
+    } catch {}
+    print("PASS: disconnected async stream terminates with an error instead of hanging.")
     for (index, testPort) in CommandLine.arguments.dropFirst().enumerated() {
       let client = SMB2Manager(
         url: URL(string: "smb://127.0.0.1:" + testPort)!,

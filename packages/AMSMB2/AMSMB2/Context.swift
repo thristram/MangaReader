@@ -367,7 +367,7 @@ extension SMB2Client {
         }
     }
 
-    private func wait_for_reply(_ cb: inout CBData) throws {
+    private func wait_for_reply(_ cb: CBData) throws {
         let startDate = Date()
         while !cb.isFinished {
             var pfd = pollfd()
@@ -400,7 +400,7 @@ extension SMB2Client {
     static let generic_handler: smb2_command_cb = { smb2, status, command_data, cbdata in
         do {
             guard try smb2.unwrap().pointee.fd >= 0 else { return }
-            let cbdata = try cbdata.unwrap().bindMemory(to: CBData.self, capacity: 1).pointee
+            let cbdata = Unmanaged<CBData>.fromOpaque(try cbdata.unwrap()).takeUnretainedValue()
             if NTStatus(rawValue: status) != .success {
                 cbdata.result = status
             }
@@ -428,7 +428,12 @@ extension SMB2Client {
         throws -> (result: Int32, data: DataType)
     {
         try withThreadSafeContext { context -> (Int32, DataType) in
-            var cb = CBData()
+            let cb = CBData()
+            // C retains this opaque pointer beyond the scheduling closure. A
+            // pointer obtained withUnsafeMutablePointer(to: &cb) expires when
+            // that closure returns, before the socket delivers its reply.
+            let callback = Unmanaged.passRetained(cb)
+            defer { callback.release() }
             var resultData: DataType?
             var dataHandlerError: (any Error)?
             cb.dataHandler = { ptr in
@@ -438,15 +443,13 @@ extension SMB2Client {
                     dataHandlerError = error
                 }
             }
-            let result = try withUnsafeMutablePointer(to: &cb) { cb in
-                try handler(context, cb)
-            }
+            let result = try handler(context, callback.toOpaque())
             try POSIXError.throwIfError(result, description: error)
             do {
-                try wait_for_reply(&cb)
+                try wait_for_reply(cb)
             } catch {
-                // Callback data points into this stack frame. On a timeout or
-                // closed socket, drain pending PDUs before the frame unwinds.
+                // Drain pending PDUs before releasing their retained callback
+                // object on a timeout or closed socket.
                 // destroy_context closes the socket first, so generic_handler
                 // ignores shutdown callbacks while C-owned handles are released.
                 if let live = self.context {
@@ -478,7 +481,12 @@ extension SMB2Client {
         throws -> (status: UInt32, data: DataType)
     {
         try withThreadSafeContext { context -> (UInt32, DataType) in
-            var cb = CBData()
+            let cb = CBData()
+            // C retains this opaque pointer beyond the scheduling closure. A
+            // pointer obtained withUnsafeMutablePointer(to: &cb) expires when
+            // that closure returns, before the socket delivers its reply.
+            let callback = Unmanaged.passRetained(cb)
+            defer { callback.release() }
             var resultData: DataType?
             var dataHandlerError: (any Error)?
             cb.dataHandler = { ptr in
@@ -488,15 +496,13 @@ extension SMB2Client {
                     dataHandlerError = error
                 }
             }
-            let pdu = try withUnsafeMutablePointer(to: &cb) { cb in
-                try handler(context, cb).unwrap()
-            }
+            let pdu = try handler(context, callback.toOpaque()).unwrap()
             smb2_queue_pdu(context, pdu)
             do {
-                try wait_for_reply(&cb)
+                try wait_for_reply(cb)
             } catch {
-                // Callback data points into this stack frame. On a timeout or
-                // closed socket, drain pending PDUs before the frame unwinds.
+                // Drain pending PDUs before releasing their retained callback
+                // object on a timeout or closed socket.
                 // destroy_context closes the socket first, so generic_handler
                 // ignores shutdown callbacks while C-owned handles are released.
                 if let live = self.context {

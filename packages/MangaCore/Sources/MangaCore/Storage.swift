@@ -1,5 +1,10 @@
 import CryptoKit
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 
 public enum StorageError: Error, LocalizedError {
   case unsafePath, collision, unsupportedMove, emptyChapter, verificationFailed,
@@ -346,6 +351,53 @@ public struct HorizontalPageGesture: Sendable {
   }
 }
 
+/// Explicit, bounded empty-directory cleanup, persisted with the file journal.
+/// rmdir is atomic and never recursively removes unrelated or concurrently added files.
+public struct EmptyMediaFolder: Codable, Sendable {
+  public let root: String
+  public let relativePath: String
+  public init(root: URL, relativePath: String) {
+    self.root = root.path
+    self.relativePath = relativePath
+  }
+  public static func plan(media: [MediaVersion], roots: [String: URL], chapterTitle: String? = nil) -> [Self] {
+    var result: [Self] = []
+    var seen = Set<String>()
+    for version in media {
+      guard let root = roots[version.storageRootId] else { continue }
+      for path in version.relativePaths {
+        var parts = path.split(separator: "/").map(String.init)
+        guard parts.count > 1 else { continue } // Never remove the storage root.
+        parts.removeLast()
+        let folder = parts.joined(separator: "/")
+        if seen.insert(root.path + "/" + folder).inserted {
+          result.append(Self(root: root, relativePath: folder))
+        }
+        if parts.count > 1, parts.last?.lowercased() == version.language.lowercased(),
+          parts.dropLast().last == chapterTitle?.trimmingCharacters(in: .whitespacesAndNewlines) {
+          parts.removeLast()
+          let chapter = parts.joined(separator: "/")
+          if seen.insert(root.path + "/" + chapter).inserted {
+            result.append(Self(root: root, relativePath: chapter))
+          }
+        }
+      }
+    }
+    return result.sorted { $0.relativePath.split(separator: "/").count > $1.relativePath.split(separator: "/").count }
+  }
+  public static func removeEmpty(_ folders: [Self]) throws {
+    for folder in folders.sorted(by: { $0.relativePath.split(separator: "/").count > $1.relativePath.split(separator: "/").count }) {
+      let url = try PathPolicy.mutationPath(folder.relativePath, under: URL(fileURLWithPath: folder.root))
+      if rmdir(url.path) != 0 {
+        let code = errno
+        if code != ENOENT && code != ENOTEMPTY && code != EEXIST {
+          throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+        }
+      }
+    }
+  }
+}
+
 public struct ArchiveFile: Sendable {
   public let root: URL
   public let rootId: String
@@ -372,6 +424,7 @@ public struct RecycleJournal: Codable, Sendable {
   public var revision: Int
   public var phase: String
   public var entries: [Entry]
+  public var cleanupFolders: [EmptyMediaFolder]? = nil
 }
 public enum FileRecycle {
   private static func validate(_ entry: RecycleJournal.Entry) throws -> URL {
@@ -386,7 +439,8 @@ public enum FileRecycle {
       to: directory.appendingPathComponent(journal.id + ".json"), options: .atomic)
   }
   public static func begin(
-    entityId: String, revision: Int, files: [ArchiveFile], journalDirectory: URL
+    entityId: String, revision: Int, files: [ArchiveFile], journalDirectory: URL,
+    cleanupFolders: [EmptyMediaFolder] = []
   ) throws -> RecycleJournal {
     let fm = FileManager.default
     let id = UUID().uuidString
@@ -412,7 +466,7 @@ public enum FileRecycle {
     }
     try fm.createDirectory(at: journalDirectory, withIntermediateDirectories: true)
     var journal = RecycleJournal(
-      id: id, entityId: entityId, revision: revision, phase: "prepared", entries: entries)
+      id: id, entityId: entityId, revision: revision, phase: "prepared", entries: entries, cleanupFolders: cleanupFolders)
     try write(journal, in: journalDirectory)
     do {
       for entry in entries {
@@ -484,6 +538,7 @@ public enum FileRecycle {
     try write(complete, in: directory)
   }
   public static func finish(_ journal: RecycleJournal, in directory: URL) throws {
+    try EmptyMediaFolder.removeEmpty(journal.cleanupFolders ?? [])
     var complete = journal
     complete.phase = "complete"
     try write(complete, in: directory)
@@ -582,8 +637,154 @@ public struct OrganizationJournal: Codable, Sendable, Identifiable {
   public var root: String
   public var sourceRootIds: [String]
   public var metadata: MetadataInput
+  /// Optional for journals written before media-only recovery was supported.
+  public var originalMetadata: MetadataInput? = nil
+  /// Retain the initial payload when recovery preserves a newer appended page.
+  public var priorMetadata: MetadataInput? = nil
   public var files: [OrganizationFile]
+  public var cleanupFolders: [EmptyMediaFolder]? = nil
+  public var sourceBookmarks: [String: Data]? = nil
   public var phase: String
+
+  /// A changed revision alone is not a file conflict. Never replace newer text or tags.
+  public func recovery(current: MetadataInput, revision: Int) throws -> OrganizationRecovery {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    func equal<T: Encodable>(_ lhs: T, _ rhs: T) throws -> Bool {
+      try encoder.encode(lhs) == encoder.encode(rhs)
+    }
+    if try equal(current, metadata) { return .committed }
+    // The server may have accepted the file references before a response was lost,
+    // followed by an unrelated metadata edit. Finishing needs no metadata write.
+    if current.kind == .chapter, !metadata.media.isEmpty,
+      try equal(current.media, metadata.media) { return .committed }
+    if revision == self.revision { return .update(metadata) }
+    guard let originalMetadata else { return .conflict }
+    var planned = originalMetadata
+    planned.media = metadata.media
+    guard try equal(planned, metadata) else { return .conflict }
+    var protected = current
+    protected.description = originalMetadata.description
+    protected.localizations = originalMetadata.localizations
+    protected.tagIds = originalMetadata.tagIds
+    protected.nsfw = originalMetadata.nsfw
+    protected.sources = originalMetadata.sources
+    // Root/path/order, original title/language and parent changes still require review.
+    guard try equal(protected, originalMetadata) else { return .conflict }
+    var merged = current
+    merged.media = metadata.media
+    return .update(merged)
+  }
+
+  /// Old per-page translation commits can prove their baseline from the inverse of
+  /// one appended cache image plus the journal's exact existing-file moves.
+  /// This is deliberately unavailable to arbitrary old organization journals.
+  public func recoveringLegacyImageAddition(current: MetadataInput, mediaId: String,
+    language: String, canonical: Int, count: Int, cachedSource: URL,
+    roots: [String: URL]) throws -> OrganizationJournal? {
+    guard originalMetadata == nil, current.kind == .chapter, metadata.kind == .chapter,
+      ["prepared", "copying", "filesReady_metadataPending"].contains(phase),
+      let destination = roots[rootId], destination.standardizedFileURL.path == root,
+      let targetIndex = metadata.media.firstIndex(where: { $0.id == mediaId }),
+      (0..<count).contains(canonical) else { return nil }
+    let target = metadata.media[targetIndex]
+    guard target.kind == "images", target.language == language, target.storageRootId == rootId,
+      target.pageCount == target.relativePaths.count, target.pageCount > 0,
+      let alignment = target.pageAlignment, alignment.count == count,
+      alignment[canonical] == target.pageCount - 1,
+      alignment.filter({ $0 == target.pageCount - 1 }).count == 1,
+      let addedPath = target.relativePaths.last else { return nil }
+    let cached = cachedSource.standardizedFileURL.path
+    let additions = files.indices.filter { files[$0].source == cached }
+    guard additions.count == 1, let addition = additions.first,
+      files[addition].keepSource, files[addition].relativePath == addedPath else { return nil }
+    var expected = metadata.media
+    expected[targetIndex].relativePaths.removeLast()
+    expected[targetIndex].pageCount -= 1
+    expected[targetIndex].pageAlignment?[canonical] = nil
+    if expected[targetIndex].pageCount == 0 {
+      guard targetIndex == expected.count - 1,
+        expected[targetIndex].pageAlignment?.allSatisfy({ $0 == nil }) == true else { return nil }
+      expected.remove(at: targetIndex)
+    }
+    guard current.media.map(\.id) == expected.map(\.id) else { return nil }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    var used: Set<Int> = [addition]
+    var recovered = self
+    for (existing, planned) in zip(current.media, expected) {
+      guard sourceRootIds.contains(existing.storageRootId), let source = roots[existing.storageRootId],
+        planned.storageRootId == rootId,
+        existing.relativePaths.count >= planned.relativePaths.count
+      else { return nil }
+      var comparable = existing
+      comparable.storageRootId = planned.storageRootId
+      comparable.relativePaths = planned.relativePaths
+      if existing.id == mediaId {
+        let priorCount = planned.relativePaths.count
+        // A stale snapshot may omit a just-committed earlier page. Preserve only
+        // append-only additions, with every old canonical mapping unchanged.
+        guard existing.pageCount == existing.relativePaths.count,
+          existing.sourcePage(at: canonical) == nil,
+          !existing.relativePaths.contains(addedPath),
+          (existing.relativePaths.count == priorCount || existing.storageRootId == rootId),
+          (existing.pageAlignment?.count ?? count) <= count,
+          (0..<count).allSatisfy({ page in
+            let old = planned.sourcePage(at: page)
+            let actual = existing.sourcePage(at: page)
+            return old != nil ? actual == old : actual == nil || actual! >= priorCount
+          })
+        else { return nil }
+        comparable.pageCount = planned.pageCount
+        comparable.pageAlignment = planned.pageAlignment
+        let extra = Array(existing.relativePaths.dropFirst(priorCount))
+        for path in extra {
+          let preserved = try PathPolicy.mutationPath(path, under: destination)
+          guard !files.contains(where: { !$0.keepSource && $0.source == preserved.path }) else { return nil }
+        }
+        var merged = existing
+        merged.storageRootId = rootId
+        merged.relativePaths = planned.relativePaths + extra + [addedPath]
+        merged.pageCount = merged.relativePaths.count
+        merged.pageAlignment = (0..<count).map {
+          $0 == canonical ? existing.relativePaths.count : existing.sourcePage(at: $0)
+        }
+        recovered.metadata.media[targetIndex] = merged
+      } else if existing.relativePaths.count != planned.relativePaths.count {
+        return nil
+      }
+      guard try encoder.encode(comparable) == encoder.encode(planned) else { return nil }
+      for (before, after) in zip(existing.relativePaths, planned.relativePaths) {
+        let sourcePath = try PathPolicy.mutationPath(before, under: source).path
+        let targetPath = try PathPolicy.mutationPath(after, under: destination).path
+        let moves = files.indices.filter { files[$0].relativePath == after }
+        if sourcePath == targetPath {
+          guard moves.isEmpty else { return nil }
+        } else {
+          guard moves.count == 1, let move = moves.first, move != addition,
+            files[move].source == sourcePath else { return nil }
+          used.insert(move)
+        }
+      }
+    }
+    // Do not adopt unrelated, duplicate, or unexplained file operations.
+    guard used.count == files.count else { return nil }
+    for file in files {
+      guard !file.digest.isEmpty,
+        try FileInventory.digest(URL(fileURLWithPath: file.source)) == file.digest
+      else { throw StorageError.verificationFailed }
+    }
+    var baseline = recovered.metadata
+    baseline.media = current.media
+    recovered.originalMetadata = baseline
+    // Bypass the unchanged-revision shortcut: folder-defining fields must match too.
+    guard case .update = try recovered.recovery(current: current, revision: revision + 1)
+    else { return nil }
+    return recovered
+  }
+}
+public enum OrganizationRecovery: Sendable {
+  case committed, update(MetadataInput), conflict
 }
 public enum FileOrganization {
   private static func save(_ journal: OrganizationJournal, in directory: URL) throws {
@@ -596,10 +797,29 @@ public enum FileOrganization {
       OrganizationJournal.self,
       from: Data(contentsOf: directory.appendingPathComponent(id + ".json")))
   }
+  /// Persist a proven recovery payload before its revision-checked metadata write.
+  public static func recordRecovery(_ initial: OrganizationJournal,
+    recovered: OrganizationJournal, in directory: URL) throws -> OrganizationJournal {
+    var stored = try read(initial.id, in: directory)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    guard try encoder.encode(stored) == encoder.encode(initial),
+      stored.originalMetadata == nil, recovered.originalMetadata != nil,
+      ["prepared", "copying", "filesReady_metadataPending"].contains(stored.phase)
+    else { throw StorageError.verificationFailed }
+    if try encoder.encode(stored.metadata) != encoder.encode(recovered.metadata) {
+      stored.priorMetadata = stored.priorMetadata ?? stored.metadata
+    }
+    stored.originalMetadata = recovered.originalMetadata
+    stored.metadata = recovered.metadata
+    try save(stored, in: directory)
+    return stored
+  }
   public static func prepare(
     entityId: String, revision: Int, metadata: MetadataInput,
     libraryId: String, rootId: String, root: URL, sourceRootIds: [String],
-    files: [OrganizationFile], directory: URL
+    files: [OrganizationFile], directory: URL, cleanupFolders: [EmptyMediaFolder] = [],
+    sourceBookmarks: [String: Data] = [:], originalMetadata: MetadataInput? = nil
   ) throws -> OrganizationJournal {
     try JSONDecoder().decode(
       LibraryDestinationIdentity.self,
@@ -622,7 +842,8 @@ public enum FileOrganization {
     let journal = OrganizationJournal(
       id: UUID().uuidString, libraryId: libraryId,
       entityId: entityId, revision: revision, rootId: rootId, root: root.path,
-      sourceRootIds: sourceRootIds, metadata: metadata, files: files, phase: "prepared")
+      sourceRootIds: sourceRootIds, metadata: metadata, originalMetadata: originalMetadata,
+      files: files, cleanupFolders: cleanupFolders, sourceBookmarks: sourceBookmarks, phase: "prepared")
     try save(journal, in: directory)
     return journal
   }
@@ -718,6 +939,7 @@ public enum FileOrganization {
         try FileManager.default.removeItem(at: source)
       }
     }
+    try EmptyMediaFolder.removeEmpty(journal.cleanupFolders ?? [])
     journal.phase = "complete"
     try save(journal, in: directory)
   }

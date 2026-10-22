@@ -249,6 +249,7 @@ final class ImportSourceAccess: @unchecked Sendable {
               "This chapter already has that media language. Choose another language.")
           }
           version.pageAlignment =
+            original.media.isEmpty ? nil :
             pageAlignment.isEmpty
             ? (0..<(original.media.first?.pageCount ?? 0)).map { $0 < count ? $0 : nil }
             : pageAlignment
@@ -271,11 +272,11 @@ final class ImportSourceAccess: @unchecked Sendable {
         added[candidate.id] = (chapter.id, version.id)
         guard owner == session.account?.ownerId else { return }
         var originalsKept = false
-        if move, let destination, let managed, translationOf != nil {
+        if move, destination != nil, let managed, translationOf != nil {
           status = "Organizing language folders…"
           failureContext = "Organizing language files"
           fileWorkStarted = true
-          try await organizeLanguages(chapter: chapter, destination: managed, folder: destination)
+          try await organizeLanguages(chapter: chapter, destination: managed)
         } else if move, let destination, let managed {
           try checkOwner()
           _ = try await library.local.validateDestinationAsync(managed)
@@ -372,94 +373,13 @@ final class ImportSourceAccess: @unchecked Sendable {
       status = "Previous import is running in the background."
     }
   }
-  private func organizeLanguages(chapter: LibraryEntity, destination: LibraryEntity, folder: URL)
+  private func organizeLanguages(chapter: LibraryEntity, destination: LibraryEntity)
     async throws
   {
-    let session = library.session
-    guard let owner = session.account?.ownerId,
-      let directory = session.cacheDirectory?.appendingPathComponent("organization-journals")
-    else { throw LoginError.invalidToken }
-    let author = library.entity(chapter.authorId)?.title
-    let work = library.entity(chapter.workId)
-    let series = library.entity(chapter.seriesId ?? work?.seriesId)?.title
-    var update = chapter.input
-    var plans: [OrganizationFile] = []
-    var scoped: [URL] = []
-    defer { scoped.forEach { $0.stopAccessingSecurityScopedResource() } }
-    let sourceRootIds = Array(Set(chapter.media.map(\.storageRootId)))
-    // Bookmark access happens on the main actor; all path checks and file work happen off it.
-    var sources: [String: URL] = [:]
-    for rootId in sourceRootIds {
-      let root = try await library.local.readingRootURL(rootId)
-      if root.startAccessingSecurityScopedResource() { scoped.append(root) }
-      try await FileTasks.perform {
-        let marker = try PathPolicy.resolve(LibraryDestinationIdentity.filename, under: root)
-        if FileManager.default.fileExists(atPath: marker.path) {
-          try JSONDecoder().decode(LibraryDestinationIdentity.self, from: Data(contentsOf: marker))
-            .validate(libraryId: owner, destinationId: rootId)
-        }
-      }
-      sources[rootId] = root
+    try await library.organizeChapterFiles(chapter, destination: destination) { [self] value in
+      progress = value
+      status = "Organizing language folders · \(Int(value * 100))%"
     }
-    let otherMedia = session.entities.filter { !$0.deleted && $0.id != chapter.id }.flatMap(\.media)
-    let referenceRoots = try await library.local.referenceRoots(for: otherMedia)
-    let usedElsewhere = try await FileTasks.perform {
-      var paths = Set<String>()
-      for media in otherMedia {
-        try Task.checkCancellation()
-        if let root = referenceRoots[media.storageRootId] {
-          for path in media.relativePaths {
-            paths.insert(root.appendingPathComponent(path).standardizedFileURL.path.lowercased())
-          }
-        }
-      }
-      return paths
-    }
-    for index in update.media.indices {
-      let media = update.media[index]
-      guard let sourceRoot = sources[media.storageRootId] else { throw LoginError.invalidToken }
-      let languagePath = try PathPolicy.chapterPath(
-        author: author, series: series, work: work?.title,
-        chapter: chapter.title, language: media.language, mediaLanguageCount: update.media.count)
-      let paths = media.relativePaths.map {
-        languagePath + "/" + URL(fileURLWithPath: $0).lastPathComponent
-      }
-      for (old, new) in zip(media.relativePaths, paths) {
-        let source = try await FileTasks.perform {
-          try PathPolicy.mutationPath(old, under: sourceRoot)
-        }
-        let target = folder.appendingPathComponent(new).standardizedFileURL
-        if source.standardizedFileURL != target {
-          plans.append(
-            OrganizationFile(
-              source: source, relativePath: new,
-              keepSource: usedElsewhere.contains(source.standardizedFileURL.path.lowercased())))
-        }
-      }
-      update.media[index].storageRootId = destination.id
-      update.media[index].relativePaths = paths
-    }
-    let files = plans
-    let metadata = update
-    let prepared = try await FileTasks.perform {
-      try FileOrganization.prepare(
-        entityId: chapter.id, revision: chapter.revision,
-        metadata: metadata, libraryId: owner, rootId: destination.id, root: folder,
-        sourceRootIds: sourceRootIds, files: files, directory: directory)
-    }
-    let staged = try await FileTasks.perform { [self] in
-      try FileOrganization.stage(prepared, in: directory) { value in
-        Task { @MainActor in
-          self.progress = value
-          self.status = "Organizing language folders · \(Int(value * 100))%"
-        }
-      }
-    }
-    try Task.checkCancellation()
-    guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
-    try await session.update(chapter, input: update)
-    guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
-    try await FileTasks.perform { try FileOrganization.finish(staged, in: directory) }
   }
 }
 
@@ -467,6 +387,7 @@ struct FileQueueItem: Identifiable {
   let id: UUID
   let title: String
   var status: String
+  let addedAt = Date()
   var completed = false
   var failed = false
 }
@@ -563,6 +484,13 @@ struct FileQueueItem: Identifiable {
         }
           ?? worker.input.authorId) == id
       }
+  }
+  var pendingCount: Int { items.filter { !$0.completed && !$0.failed }.count }
+  var hasErrors: Bool { items.contains(where: \.failed) }
+  func removeFailed(_ id: UUID) {
+    guard let index = items.firstIndex(where: { $0.id == id && $0.failed }) else { return }
+    failedWorkers.removeValue(forKey: id)?.0.close()
+    items.remove(at: index)
   }
   func retry(_ id: UUID) {
     guard let (worker, move, permissions) = failedWorkers.removeValue(forKey: id),
@@ -1011,6 +939,9 @@ struct TranslationAlignmentScreen: View {
             Text(
               "Match each original page with its translated page. Unmatched pages use the original. Extra import pages stay in the source; only matched pages enter the reading order."
             ).foregroundStyle(.secondary)
+            if original?.media.isEmpty == true {
+              Text("This chapter has no media yet. Imported pages become its first media version; no alignment is needed.")
+            }
             if let original, let media = original.media.first, let candidate {
               ForEach(draft.indices, id: \.self) { index in
                 HStack(spacing: 24) {

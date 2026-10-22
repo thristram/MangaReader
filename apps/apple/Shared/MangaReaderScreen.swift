@@ -14,19 +14,20 @@ struct MangaReaderScreen: View {
   @State private var version: MediaVersion
   @State private var page: Int
   @State private var controls = true
+  @State private var dismissOffset: CGFloat = 0
   @State private var thumbnails = false
   @State private var overview = false
   @State private var chapterInfo = false
+  @State private var fileInfo = false
   @State private var started = Date()
   @State private var activeSeconds = 0
   @State private var videoCompleted = false
   @State private var isActive = true
   @State private var pageAspect: CGFloat = 0.7
-  #if os(macOS)
-    @StateObject private var playback = ReaderVideoPlayback()
-  #endif
-  init(context: ReadingContext) {
+  @StateObject private var playback: ReaderVideoPlayback
+  init(context: ReadingContext, playback: ReaderVideoPlayback? = nil) {
     self.context = context
+    _playback = StateObject(wrappedValue: playback ?? ReaderVideoPlayback())
     _version = State(initialValue: context.version)
     _page = State(initialValue: context.page)
   }
@@ -71,12 +72,17 @@ struct MangaReaderScreen: View {
                 PhoneReaderPager(
                   index: $page, count: count, rightToLeft: direction == "rtl",
                   contentID: "\(version.id):\(chapter.revision)",
-                  onTap: { withAnimation { controls.toggle() } }
+                  onTap: { withAnimation { controls.toggle() } },
+                  onDismiss: { library.reader = nil },
+                  onDismissDrag: { value in
+                    if value == 0 { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { dismissOffset = 0 } }
+                    else { dismissOffset = value }
+                  }
                 ) { index in
                   AnyView(
                     canvas(index).frame(maxWidth: .infinity, maxHeight: .infinity)
                       .background(.black).foregroundStyle(.white)
-                      .environmentObject(library).environmentObject(session))
+                      .environmentObject(library).environmentObject(session).environmentObject(playback))
                 }
               #else
                 MacReaderPager(index: $page, count: count, rightToLeft: direction == "rtl",
@@ -118,6 +124,8 @@ struct MangaReaderScreen: View {
     }
     .background(.black).foregroundStyle(.white)
     #if os(iOS)
+      .offset(y: dismissOffset)
+      .scaleEffect(1 - min(0.12, dismissOffset / 2500))
       .statusBarHidden(!controls)
       .persistentSystemOverlays(controls ? .automatic : .hidden)
     #endif
@@ -130,6 +138,15 @@ struct MangaReaderScreen: View {
       )
       .environmentObject(library).environmentObject(session)
     }
+    .sheet(isPresented: $fileInfo) {
+      if let source = library.pageMedia(chapter, preferred: version, page: page) {
+        ReaderFileInfo(media: source.media, page: source.index).environmentObject(library)
+      }
+    }
+    .popover(isPresented: $chapterInfo, arrowEdge: .top) {
+      ScrollView { descriptionPane.padding(20) }
+        .frame(width: 300, height: 240).presentationCompactAdaptation(.popover)
+    }
     .onAppear {
       activeSeconds = library.state(chapter.id)?.progress?.activeSeconds ?? 0
       started = Date()
@@ -137,7 +154,12 @@ struct MangaReaderScreen: View {
     }
     .onChange(of: page) { _, _ in recordProgress() }
     .onChange(of: chapter.revision) { _, _ in
-      if let current = chapter.media.first(where: { $0.id == version.id }) { version = current }
+      guard let fallback = chapter.preferredMedia(AppConfiguration.preferredLanguage) else {
+        library.reader = nil
+        return
+      }
+      version = chapter.media.first(where: { $0.id == version.id }) ?? fallback
+      page = min(page, max(0, count - 1))
     }
     .onChange(of: scenePhase) { old, new in
       if old == .active {
@@ -153,9 +175,7 @@ struct MangaReaderScreen: View {
     .onDisappear {
       accumulateTime()
       recordProgress()
-      #if os(macOS)
-        playback.reset()
-      #endif
+      playback.reset()
     }
     .accessibilityIdentifier("manga-reader")
   }
@@ -196,17 +216,14 @@ struct MangaReaderScreen: View {
         }.buttonStyle(.plain).accessibilityLabel("All Pages")
           .accessibilityValue(library.title(chapter) + ", " + readerSubtitle)
           .accessibilityIdentifier("reader-all-pages")
-        Button {
-          chapterInfo.toggle()
+        Menu {
+          Button("Info", systemImage: "info.circle") { fileInfo = true }
+          Button("Chapter Description", systemImage: "text.alignleft") { chapterInfo = true }
         } label: {
           Image(systemName: "ellipsis").font(.title3.weight(.semibold)).frame(width: 44, height: 44)
             .glassEffect(.regular.interactive(), in: Circle())
-        }.buttonStyle(.plain).accessibilityLabel("Chapter Description")
-          .accessibilityIdentifier("reader-description")
-          .popover(isPresented: $chapterInfo, arrowEdge: .top) {
-            ScrollView { descriptionPane.padding(20) }
-              .frame(width: 300, height: 240).presentationCompactAdaptation(.popover)
-          }
+        }.buttonStyle(.plain).menuIndicator(.hidden).accessibilityLabel("Reader Options")
+          .accessibilityIdentifier("reader-options")
       }
     }
     private var readerSubtitle: String {
@@ -214,6 +231,12 @@ struct MangaReaderScreen: View {
         ?? library.entity(chapter.authorId).map(library.title) ?? "other author"
     }
     private var phoneBottomControls: some View {
+      VStack(spacing: 10) {
+        if version.kind == "video" { ReaderVideoControls(playback: playback) }
+        phonePageControls
+      }
+    }
+    private var phonePageControls: some View {
       HStack(spacing: 8) {
         Menu {
           Picker(
@@ -282,6 +305,7 @@ struct MangaReaderScreen: View {
         .buttonStyle(.plain).accessibilityLabel("All Pages")
         .accessibilityIdentifier("reader-all-pages")
       Menu {
+        Button("Info", systemImage: "info.circle") { fileInfo = true }
         Toggle("Chapter Description", isOn: $showDescription)
         if library.canManage {
           Divider()
@@ -386,7 +410,7 @@ struct MangaReaderScreen: View {
     started = Date()
   }
   private func recordProgress() {
-    guard session.account != nil, library.entity(chapter.id) != nil else { return }
+    guard session.account != nil, library.entity(chapter.id) != nil, !chapter.media.isEmpty else { return }
     let old = library.stateInput(chapter.id)
     library.writeState(
       .init(
@@ -423,37 +447,6 @@ struct ReaderPageStarButton: View {
   }
 }
 
-struct NativeVideoPage: View {
-  let url: URL
-  var onComplete: (() -> Void)?
-  @State private var player: AVPlayer?
-  @State private var unsupported = false
-  var body: some View {
-    Group {
-      if unsupported {
-        ContentUnavailableView(
-          "Video cannot be played", systemImage: "play.slash",
-          description: Text("This device does not support the file's video codec."))
-      } else if let player {
-        VideoPlayer(player: player)
-      } else {
-        ProgressView()
-      }
-    }.task(id: url) {
-      let asset = AVURLAsset(url: url)
-      if (try? await asset.load(.isPlayable)) == true {
-        player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
-      } else {
-        unsupported = true
-      }
-    }.onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) {
-      notification in
-      if let item = notification.object as? AVPlayerItem, item === player?.currentItem {
-        onComplete?()
-      }
-    }.onDisappear { player?.pause() }
-  }
-}
 struct ReadingMediaPage: View {
   let media: MediaVersion
   let index: Int
@@ -473,11 +466,7 @@ struct ReadingMediaPage: View {
     Group {
       if let url {
         if media.kind == "video" {
-          #if os(macOS)
-            MacVideoPage(url: url, isCurrent: isCurrent, onComplete: onComplete)
-          #else
-            NativeVideoPage(url: url, onComplete: onComplete)
-          #endif
+          ReaderVideoPage(url: url, isCurrent: isCurrent, onComplete: onComplete)
         } else {
           NativeReadingPage(
             url: url, pdfPage: media.kind == "pdf" ? index : nil, onSwipe: { _ in },
@@ -485,7 +474,7 @@ struct ReadingMediaPage: View {
         }
       } else if !error.isEmpty {
         VStack(spacing: 12) {
-          Text(error).font(.callout)
+          Text(error).font(.callout).textSelection(.enabled)
           Button("Retry") { retry += 1 }
         }.padding(24)
       } else {
@@ -595,6 +584,22 @@ struct ChapterOverviewScreen: View {
   @State private var dragging: Int?
   @State private var saving = false
   @State private var status = ""
+  #if os(macOS)
+    @State private var selecting = false
+    @State private var selectedPages = Set<Int>()
+    @State private var batchMediaId: String?
+    @State private var batchRequest: PageBatchRequest?
+    @State private var addingImages = false
+    @State private var imageRequest: AddImagesRequest?
+    private var currentChapter: LibraryEntity {
+      session.entities.first { $0.id == chapter.id && !$0.deleted } ?? chapter
+    }
+    private var batchMedia: MediaVersion? {
+      currentChapter.media.first { $0.id == batchMediaId }
+        ?? currentChapter.media.first { $0.id == preferred?.id }
+        ?? currentChapter.preferredMedia(AppConfiguration.preferredLanguage)
+    }
+  #endif
   private var media: MediaVersion? {
     editing
       ? (chapter.media.first { $0.language == chapter.originalLanguage } ?? chapter.media.first)
@@ -603,64 +608,81 @@ struct ChapterOverviewScreen: View {
   var body: some View {
     NavigationStack {
       VStack(spacing: 0) {
-        SheetHeading(editing ? "Page Order" : "All Pages", inset: 24)
-        ScrollView {
-          VStack(alignment: .leading, spacing: 22) {
-            Text(
-              editing
-                ? "Drag pages to change reading order. Source filenames stay unchanged. Saved page positions follow the new order."
-                : "Choose a page to return to the reader."
-            ).foregroundStyle(.secondary)
-            if let media {
-              LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 18)], spacing: 22) {
-                ForEach(order, id: \.self) { index in
-                  Button {
-                    if !editing {
-                      onSelect?(index)
-                      dismiss()
-                    }
-                  } label: {
-                    VStack(spacing: 8) {
-                      if editing {
-                        MediaPagePreview(media: media, index: index)
-                          .aspectRatio(0.72, contentMode: .fit).clipShape(
-                            RoundedRectangle(cornerRadius: 8))
-                      } else {
-                        ChapterPagePreview(chapter: chapter, preferred: media, page: index)
-                          .aspectRatio(0.72, contentMode: .fit).clipShape(
-                            RoundedRectangle(cornerRadius: 8))
-                      }
-                      Text("Page \(index + 1)").font(.caption)
-                    }
-                  }.buttonStyle(.plain)
-                    .onDrag {
-                      if editing { dragging = index }
-                      return NSItemProvider(object: String(index) as NSString)
-                    }
-                    .onDrop(
-                      of: [UTType.text],
-                      delegate: PageOrderDrop(
-                        target: index, order: $order, dragging: $dragging, enabled: editing))
-                }
-              }
+        HStack {
+          SheetHeading(editing ? "Page Order" : "All Pages", inset: 24)
+          #if os(macOS)
+            if library.canManage {
+              Button("Add Images…", systemImage: "photo.badge.plus") { addingImages = true }
+                .disabled(saving).padding(.trailing, 24)
             }
-            if !status.isEmpty { Text(status).font(.caption).foregroundStyle(.secondary) }
-          }.padding(24)
+          #endif
         }
+        #if os(macOS)
+          if selecting, let source = batchMedia {
+            selectionControls(source)
+            MacPageSelectionGrid(pages: PageBatchPlan.readingOrder(source), selection: $selectedPages) { index in
+              AnyView(MediaPagePreview(media: source, index: index)
+                .environmentObject(library).environmentObject(session))
+            }
+            if !status.isEmpty { Text(status).font(.caption).padding(12) }
+          } else { pageGrid }
+        #else
+          pageGrid
+        #endif
       }.navigationTitle("")
         .toolbar {
           ToolbarItem(placement: .cancellationAction) {
             Button("Close") { dismiss() }.disabled(saving)
           }
+          #if os(macOS)
+            if !editing, library.canManage, batchMedia?.kind == "images" {
+              ToolbarItem(placement: .primaryAction) {
+                Button(selecting ? "Done" : "Edit", systemImage: selecting ? "checkmark" : "pencil") {
+                  selecting.toggle()
+                  selectedPages = []
+                  status = ""
+                }.disabled(saving)
+              }
+            }
+          #endif
           if editing {
             ToolbarItem(placement: .confirmationAction) {
-              Button(saving ? "Saving…" : "Save Reading Order", action: save).disabled(saving)
+              Button(saving ? "Saving…" : "Save Reading Order", action: save).disabled(saving || media == nil)
             }
           }
         }
     }
     #if os(macOS)
       .frame(width: 850, height: 650)
+      .sheet(item: $batchRequest) { request in
+        PageBatchWorkflowScreen(request: request) { updated in
+          onSaved?(updated)
+          selectedPages = []
+          selecting = false
+          dismiss()
+        }.environmentObject(library).environmentObject(session)
+      }
+      .fileImporter(isPresented: $addingImages, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
+        do {
+          let urls = try result.get().sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+          let files = try urls.map { try ImportSourceAccess($0) }
+          if !files.isEmpty { imageRequest = AddImagesRequest(chapter: currentChapter, files: files) }
+        } catch { status = error.localizedDescription }
+      }
+      .sheet(item: $imageRequest) { request in
+        AddImagesScreen(request: request, initialLanguage: (editing ? media?.language : batchMedia?.language) ?? AppConfiguration.preferredLanguage) { updated in
+          onSaved?(updated)
+          selectedPages = []
+          selecting = false
+          dismiss()
+        }.environmentObject(library).environmentObject(session)
+      }
+      .onChange(of: currentChapter.revision) { _, _ in
+        if selecting {
+          selectedPages = []
+          status = "Chapter updated. Review its current pages before selecting again."
+        }
+      }
     #endif
     .onAppear {
       if let media {
@@ -673,6 +695,85 @@ struct ChapterOverviewScreen: View {
       }
     }
   }
+  private var pageGrid: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 22) {
+        Text(
+          editing
+            ? "Drag pages to change reading order. Source filenames stay unchanged. Saved page positions follow the new order."
+            : "Choose a page to return to the reader."
+        ).foregroundStyle(.secondary)
+        if let media {
+          LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 18)], spacing: 22) {
+            ForEach(order, id: \.self) { index in
+              Button {
+                if !editing {
+                  onSelect?(index)
+                  dismiss()
+                }
+              } label: {
+                VStack(spacing: 8) {
+                  if editing {
+                    MediaPagePreview(media: media, index: index)
+                      .aspectRatio(0.72, contentMode: .fit).clipShape(
+                        RoundedRectangle(cornerRadius: 8))
+                  } else {
+                    ChapterPagePreview(chapter: chapter, preferred: media, page: index)
+                      .aspectRatio(0.72, contentMode: .fit).clipShape(
+                        RoundedRectangle(cornerRadius: 8))
+                  }
+                  Text("Page \(index + 1)").font(.caption)
+                }
+              }.buttonStyle(.plain)
+                .onDrag {
+                  if editing { dragging = index }
+                  return NSItemProvider(object: String(index) as NSString)
+                }
+                .onDrop(
+                  of: [UTType.text],
+                  delegate: PageOrderDrop(
+                    target: index, order: $order, dragging: $dragging, enabled: editing))
+            }
+          }
+        }
+        if !status.isEmpty { Text(status).font(.caption).foregroundStyle(.secondary) }
+      }.padding(24)
+    }
+  }
+  #if os(macOS)
+    private func selectionControls(_ source: MediaVersion) -> some View {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack {
+          Picker("Media", selection: Binding(get: { source.id }, set: { batchMediaId = $0; selectedPages = [] })) {
+            ForEach(currentChapter.media.filter { $0.kind == "images" }) { Text($0.languageLabel).tag($0.id) }
+          }.frame(width: 180)
+          Text("\(selectedPages.count) selected").foregroundStyle(.secondary)
+          Spacer()
+        }
+        HStack {
+          Button("Select All") { selectedPages = Set(PageBatchPlan.readingOrder(source)) }
+          Button("Deselect All") { selectedPages = [] }
+          Spacer()
+          Button("Set as Translation", systemImage: "globe") { beginBatch(source, translating: true) }
+            .disabled(selectedPages.isEmpty)
+          Button("Delete", systemImage: "trash", role: .destructive) { beginBatch(source, translating: false) }
+            .disabled(selectedPages.isEmpty)
+        }
+        Text("Click, Command-click, Shift-click or drag a selection rectangle. Only Commit changes files.")
+          .font(.caption).foregroundStyle(.secondary)
+      }.padding(.horizontal, 24).padding(.bottom, 12)
+    }
+    private func beginBatch(_ source: MediaVersion, translating: Bool) {
+      do {
+        let plan = try PageBatchPlan(metadata: currentChapter.input, mediaId: source.id, selected: selectedPages)
+        if translating && plan.metadata.media.isEmpty {
+          throw LoginError.server("Keep original pages in this chapter before splitting a translation. Use Edit Chapter to change a whole version’s language.")
+        }
+        batchRequest = PageBatchRequest(chapter: currentChapter, plan: plan, translating: translating)
+        status = ""
+      } catch { status = error.localizedDescription }
+    }
+  #endif
   private func save() {
     guard let media,
       let current = session.entities.first(where: { $0.id == chapter.id && !$0.deleted }),

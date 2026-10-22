@@ -21,6 +21,10 @@ if args.reader_checks and args.platform != "phone": parser.error("--reader-check
 preview = root / (".build/native-phone-reader-checks" if args.reader_checks else ".build/native-ui-sandbox-preview" if args.sandbox else ".build/native-ui-preview")
 (preview / "scripts").mkdir(parents=True, exist_ok=True)
 app = preview / "apps/apple"
+# Remove only stale generated Swift sources so source moves do not leave duplicate types.
+for scope in ["Shared", "Mac", "iPhone"]:
+    for old in (app / scope).glob("*.swift"):
+        if not (root / "apps/apple" / scope / old.name).exists(): old.unlink()
 shutil.copytree(root / "apps/apple", app, dirs_exist_ok=True, ignore=shutil.ignore_patterns("Local.xcconfig", "xcuserdata"))
 (preview / "packages").mkdir(exist_ok=True)
 core = preview / "packages/MangaCore"
@@ -106,6 +110,8 @@ final class PhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
 if args.reader_checks:
     (app / "iPhone/AppDelegate.swift").write_text((root / "scripts/verify-phone-reader.swift").read_text())
     shutil.copy2(root / "scripts/collection-loading-checks.swift", app / "Shared/CollectionLoadingChecks.swift")
+    shutil.copy2(root / "scripts/phone-video-checks.swift", app / "iPhone/PhoneVideoChecks.swift")
+    shutil.copy2(root / "scripts/phone-paging-stress-checks.swift", app / "iPhone/PhonePagingStressChecks.swift")
 subprocess.run(["python3", str(preview / "scripts/generate-xcode-project.py")], check=True)
 scheme = "MangaReaderMac" if args.platform == "mac" else "MangaReaderiPhone"
 destination = args.destination or ("platform=macOS,arch=arm64" if args.platform == "mac" else "generic/platform=iOS Simulator")

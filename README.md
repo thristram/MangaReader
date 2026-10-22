@@ -73,3 +73,7 @@ After adding/removing Apple source files, run `python3 scripts/generate-xcode-pr
 Native screens use SwiftUI on both platforms. [Page-by-page UI verification](docs/apple/ui-verification.md) includes native screenshots and the isolated preview workflow. The historical mock remains editable under `docs/mock`.
 
 Start with [docs index](docs/README.md), [requirements](docs/requirements.md), [specification](docs/spec.md), [API contract](docs/api-contract.md), [ADRs](docs/adr/README.md) and [UI preview](docs/mock/index.html).
+
+### Optional manga image translation (Mac)
+
+Run manga-image-translator separately, then open **Settings → Manga Image Translation** to set/test its API base URL and defaults. **Edit Chapter → Translate Manga…** queues page translation and automatic archive organization. Track jobs/previews under **Pending Organization → Translation Queue**. [Setup, options and recovery](docs/apple/manga-image-translation-2026-10-18.md) explain the direct image-service API, partial-language fallback and retry behavior; no Vercel/MongoDB migration is needed.

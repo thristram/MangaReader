@@ -254,6 +254,8 @@ struct MetadataEditor: View {
   @State private var editingRevision: Int?
   #if os(macOS)
     @State private var mediaLanguageReview: MediaLanguageReview?
+    @State private var mediaDeletion: PageBatchRequest?
+    @State private var translatingChapter: LibraryEntity?
   #endif
   init(request: EditorRequest, onSave: ((LibraryEntity) -> Void)? = nil) {
     self.request = request
@@ -371,9 +373,21 @@ struct MetadataEditor: View {
                       .disabled(saving || translating)
                   #endif
                   Text("\(version.pageCount) pages").foregroundStyle(.secondary)
+                  #if os(macOS)
+                    Button("Delete " + version.languageLabel + " media", systemImage: "trash", role: .destructive) {
+                      do {
+                        guard let current = try currentForSave() else { return }
+                        var metadata = cleanedInput
+                        metadata.media = current.media
+                        mediaDeletion = PageBatchRequest(chapter: current,
+                          plan: try PageBatchPlan(metadata: metadata, mediaId: version.id,
+                            selected: [], removeEntireVersion: true), translating: false)
+                      } catch { status = error.localizedDescription }
+                    }.labelStyle(.iconOnly).buttonStyle(.borderless).disabled(saving || translating)
+                  #endif
                 }
               }
-              Button("Page Order…", systemImage: "square.grid.3x3") { pageOverview = true }
+              Button("All Pages…", systemImage: "square.grid.3x3") { pageOverview = true }
               if !chapter.media.isEmpty {
                 Text(
                   "Changing a media language opens a file commit review. Text translations keep their own language."
@@ -381,6 +395,24 @@ struct MetadataEditor: View {
               }
             }
           }
+          if [.work, .chapter].contains(input.kind), let entity = request.entity {
+            Section("Referenced Folders") {
+              ReferencedFoldersView(entity: entity)
+            }
+          }
+          #if os(macOS)
+            if input.kind == .chapter, let original = request.entity, library.canManage {
+              Section {
+                Button("Translate Manga…", systemImage: "character.bubble") {
+                  if let current = session.entities.first(where: { $0.id == original.id && !$0.deleted }) {
+                    translatingChapter = current
+                  }
+                }.disabled(saving || translating || !input.media.contains { $0.kind != "video" })
+                Text("Translate image or PDF pages and add them to a media language. Monitor progress in Pending Organization → Translation Queue.")
+                  .font(.caption).foregroundStyle(.secondary)
+              }
+            }
+          #endif
           if !status.isEmpty { Section { Text(status).font(.callout).foregroundStyle(.secondary) } }
         }.formStyle(.grouped)
       }
@@ -424,6 +456,18 @@ struct MetadataEditor: View {
       ).environmentObject(library).environmentObject(session)
     }
     #if os(macOS)
+      .sheet(item: $translatingChapter) { chapter in
+        TranslateMangaScreen(chapter: chapter) {
+          status = "Manga translation queued. View progress in Pending Organization → Translation Queue."
+        }.environmentObject(library).environmentObject(session)
+      }
+      .sheet(item: $mediaDeletion) { deletion in
+        PageBatchWorkflowScreen(request: deletion) { updated in
+          input = updated.input
+          editingRevision = updated.revision
+          status = "Media version recycled. Empty media and chapter folders removed."
+        }.environmentObject(library).environmentObject(session)
+      }
       .sheet(item: $mediaLanguageReview) { review in
         MediaLanguageCommitScreen(review: review) { updated in
           input = updated.input

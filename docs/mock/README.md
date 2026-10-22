@@ -14,3 +14,7 @@ Canonical interaction/page requirements: [Apple UI spec](../apple/ui-spec.md). A
 ## Native SwiftUI iteration
 
 The historical HTML design remains unchanged. [Native screenshot gallery](native/index.html) contains real rendered Mac/iPhone fixture previews of the rewritten screens. [Page coverage and verification](../apple/ui-verification.md) describes checks and remaining acceptance. Synthetic covers are clearly labeled; no personal library screenshots or credentials are stored here.
+
+## Image translation native preview (2026-10-18)
+
+Build the isolated preview with `python3 scripts/preview-native-ui.py mac`. Quit that preview, run `python3 scripts/seed-translation-preview.py`, then reopen the generated preview app. Translation Queue shows synthetic completed/failed chapters, progress, descriptions, cached thumbnail grids and native page preview. The seed script only writes `.build/native-ui-preview/fixtures`, and its non-runnable example jobs use an `.invalid` endpoint. No comics are sent to a service. Settings/confirmation use the same real native forms; service connection errors disable enqueueing. See [setup and behavior](../apple/manga-image-translation-2026-10-18.md).

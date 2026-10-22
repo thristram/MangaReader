@@ -6,7 +6,8 @@ import SwiftUI
 enum LibraryPage: String, CaseIterable, Identifiable, Hashable {
   case search, library, continuing, favorites, starred, savedPages, authors, series, tags
   case history, statistics, downloads, importing, organization, storage
-  case settings, reading, translation, connections, sync, files
+  case settings, reading, translation, imageTranslation, connections, sync, files
+  case unorganized, fileManagement, translationQueue, commitHistory
   var id: String { rawValue }
   var title: String {
     switch self {
@@ -24,6 +25,11 @@ enum LibraryPage: String, CaseIterable, Identifiable, Hashable {
     case .downloads: "Downloads"
     case .importing: "Import & Identify"
     case .organization: "Pending Organization"
+    case .unorganized: "Not Yet Organized"
+    case .fileManagement: "File Management Queue"
+    case .translationQueue: "Translation Queue"
+    case .commitHistory: "Commit History"
+    case .imageTranslation: "Manga Image Translation"
     case .storage: "Storage Locations"
     case .settings: "General"
     case .reading: "Reading & Language"
@@ -49,6 +55,11 @@ enum LibraryPage: String, CaseIterable, Identifiable, Hashable {
     case .downloads: "arrow.down.circle"
     case .importing: "folder.badge.plus"
     case .organization: "folder.badge.gearshape"
+    case .unorganized: "folder.badge.questionmark"
+    case .fileManagement: "list.bullet.rectangle"
+    case .translationQueue: "character.bubble"
+    case .commitHistory: "clock.arrow.circlepath"
+    case .imageTranslation: "photo.badge.checkmark"
     case .storage: "externaldrive"
     case .settings: "gearshape"
     case .reading: "text.book.closed"
@@ -61,10 +72,15 @@ enum LibraryPage: String, CaseIterable, Identifiable, Hashable {
   static let libraryPages: [Self] = [
     .library, .continuing, .favorites, .starred, .savedPages, .authors, .series, .tags,
   ]
+  static let organizationPages: [Self] = [.unorganized, .fileManagement, .translationQueue, .commitHistory]
   static let activityPages: [Self] = [.history, .statistics, .downloads]
-  static let settingsPages: [Self] = [
-    .settings, .reading, .translation, .connections, .sync, .files,
-  ]
+  static var settingsPages: [Self] {
+    #if os(macOS)
+      [.settings, .reading, .translation, .imageTranslation, .connections, .sync, .files]
+    #else
+      [.settings, .reading, .translation, .connections, .sync, .files]
+    #endif
+  }
 }
 enum LibraryRoute: Hashable {
   case page(LibraryPage)
@@ -120,6 +136,8 @@ struct DownloadActivity: Identifiable {
   private var availabilityUpdate: Task<Void, Never>?
   #if os(macOS)
     lazy var fileQueue = ImportFileQueue(library: self)
+    lazy var translationQueue = MangaTranslationQueue(library: self)
+    @Published var organizingChapterIds = Set<String>()
   #endif
   @Published var query = ""
   @Published var sort: LibrarySort = .updated
@@ -173,6 +191,8 @@ struct DownloadActivity: Identifiable {
     smb.resetAvailability()
     #if os(macOS)
       fileQueue.cancel()
+      translationQueue.reset()
+      organizingChapterIds.removeAll()
     #endif
     deletionEpoch = UUID()
     deletionTask?.cancel()
@@ -576,7 +596,7 @@ struct DownloadActivity: Identifiable {
     }
     #if os(macOS)
       if (entity.kind == .author && fileQueue.managesAuthor(entity.id))
-        || chapters(entity).contains(where: { fileQueue.manages($0.id) })
+        || chapters(entity).contains(where: { fileQueue.manages($0.id) || organizingChapterIds.contains($0.id) })
       {
         show(
           LoginError.server(
@@ -591,7 +611,8 @@ struct DownloadActivity: Identifiable {
     guard let entity = deletionRequest, !deletingComic else { return }
     deletionRequest = nil
     #if os(macOS)
-      if entity.kind == .author && fileQueue.managesAuthor(entity.id) {
+      if (entity.kind == .author && fileQueue.managesAuthor(entity.id))
+        || chapters(entity).contains(where: { fileQueue.manages($0.id) || organizingChapterIds.contains($0.id) }) {
         show(
           LoginError.server(
             "This author has an active import. Wait for it to finish before deleting the author."))
@@ -641,6 +662,8 @@ struct DownloadActivity: Identifiable {
     for record in records {
       try Task.checkCancellation()
       let files = try local.archiveFiles(for: record, deleting: [record.id])
+      let cleanupRoots = try await local.referenceRoots(for: record.media)
+      let cleanup = EmptyMediaFolder.plan(media: record.media, roots: cleanupRoots, chapterTitle: record.title)
       guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
       cancelDownload(record.id)
       pendingStates = pendingStates.filter { $0.value.entityId != record.id }
@@ -651,7 +674,8 @@ struct DownloadActivity: Identifiable {
       if !files.isEmpty {
         journal = try await FileTasks.perform {
           try FileRecycle.begin(
-            entityId: record.id, revision: record.revision, files: files, journalDirectory: journals
+            entityId: record.id, revision: record.revision, files: files, journalDirectory: journals,
+            cleanupFolders: cleanup
           )
         }
       }
@@ -691,7 +715,7 @@ struct DownloadActivity: Identifiable {
         }
       }
       if let journal {
-        try? await FileTasks.perform { try FileRecycle.finish(journal, in: journals) }
+        try await FileTasks.perform { try FileRecycle.finish(journal, in: journals) }
       }
       guard owner == session.account?.ownerId else { return }
       // Offline copies are retained; deletion must not purge a surviving copy

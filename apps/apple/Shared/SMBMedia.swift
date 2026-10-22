@@ -272,12 +272,19 @@ private final class TransferCancellation: @unchecked Sendable {
     let path =
       (connection.basePath.isEmpty ? "" : connection.basePath + "/")
       + LibraryDestinationIdentity.filename
-    var data = Data()
-    for try await chunk in client.contents(atPath: path, range: 0..<4096) { data.append(chunk) }
+    // Wait for the bounded read itself before a cancelled cover disconnects
+    // its client; abandoning an async stream leaves its producer racing teardown.
+    let cancellation = TransferCancellation()
+    let data: Data = try await withTaskCancellationHandler {
+      try await client.contents(atPath: path, range: 0..<4096, progress: { _, _ in
+        !cancellation.isCancelled
+      })
+    } onCancel: { cancellation.cancel() }
+    try Task.checkCancellation()
     try JSONDecoder().decode(LibraryDestinationIdentity.self, from: data).validate(
       libraryId: libraryId, destinationId: rootId)
   }
-  func connection(rootId: String) throws -> SMBConnection {
+  func connection(rootId: String, referencePath: String? = nil) throws -> SMBConnection {
     let q: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: CredentialKeychain.service,
@@ -286,7 +293,12 @@ private final class TransferCancellation: @unchecked Sendable {
     ]
     var item: CFTypeRef?
     guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let data = item as? Data
-    else { throw LoginError.server("Configure this chapter’s SMB root in Connections first.") }
+    else {
+      throw SMBRootNotConfigured(
+        rootId: rootId,
+        rootName: session.entities.first { $0.id == rootId && !$0.deleted }?.title ?? "Unknown storage root",
+        referencePath: referencePath)
+    }
     return try JSONDecoder().decode(SMBConnection.self, from: data)
   }
   private func directory(_ media: MediaVersion) throws -> URL {
@@ -347,7 +359,10 @@ private final class TransferCancellation: @unchecked Sendable {
       return existing
     }
     if localURLs == nil {
-      let configuration = try self.connection(rootId: media.storageRootId)
+      let missingIndex = requested.dropFirst(existing.count).first
+      let configuration = try self.connection(
+        rootId: media.storageRootId,
+        referencePath: missingIndex.map { media.relativePaths[$0] })
       let remote = try makeClient(configuration)
       do { try await checkNetwork(configuration) } catch {
         throw SMBConnectionFailure(stage: .network, error: error)

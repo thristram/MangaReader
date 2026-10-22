@@ -77,3 +77,7 @@ NSFW inherits from direct flags, NSFW tags, author, series and work. Default lis
 ## Native frameworks
 
 SwiftUI handles grids, sheets, navigation and system chrome; AppKit/UIKit host the screens and own lifecycle. AuthenticationServices handles hosted login. PDFKit handles PDF pages; ImageIO/system decoders handle images; AVKit/AVFoundation handle supported videos; QuickLookThumbnailing supplies Mac cover/file thumbnails. AMSMB2 4.0.3 provides SMB2/3 and is linked dynamically. Full codec compatibility, gesture/zoom polish and distribution licensing checks are release acceptance tasks.
+
+## Optional rendered image translation
+
+The Mac talks directly to a separately deployed manga-image-translator service, serializes page jobs in an account-local queue, caches validated results, then commits aligned media versions and archive files through existing journals. Vercel/MongoDB remain the metadata control plane. iPhone reads committed translations normally. See [Mac image translation](apple/manga-image-translation-2026-10-18.md) and [ADR 0015](adr/0015-local-page-image-translation-queue.md).

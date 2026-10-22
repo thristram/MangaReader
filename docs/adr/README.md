@@ -14,5 +14,9 @@
 | [0010](0010-import-source-grants.md) | Capture source grants at drop/picker callbacks and retain them through queued import retry |
 | [0011](0011-iphone-native-reader.md) | UIKit iPhone paging, complete-page minimum zoom and edge-to-edge media |
 | [0012](0012-background-media-loading.md) | Indexed collections, bounded background media work and read-only SMB Unicode resolution |
+| [0013](0013-mac-page-batch-edit.md) | AppKit page multi-selection and staged translation/delete commits through existing file journals |
 
 See each ADR for its acceptance date. An ADR can accept the target design while noting the first milestone's narrower implementation. Changes should supersede an ADR explicitly rather than silently contradict it.
+- [0014: Journaled media-folder cleanup and image additions](0014-journaled-media-folder-cleanup.md)
+- [0015: Local page image translation queue](0015-local-page-image-translation-queue.md)
+- [0016: Import shared-source reference index](0016-import-source-reference-index.md)

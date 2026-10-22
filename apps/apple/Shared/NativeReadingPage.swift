@@ -33,51 +33,68 @@ enum ReadingPageDecodingError: LocalizedError {
 enum ReadingPageDecoder {
   // Bound decoded memory by pixel count, not the longest edge: long strips keep
   // their readable width. Original files and exports are never modified.
-  static let maximumPixels = 24_000_000.0
+  #if os(iOS)
+    static let maximumPixels = 12_000_000.0
+    private static let permits = AsyncPermitPool(limit: 1)
+  #else
+    static let maximumPixels = 24_000_000.0
+    private static let permits = AsyncPermitPool(limit: 2)
+  #endif
   static func load(url: URL, pdfPage: Int?) async throws -> DecodedReadingPage {
-    try await FileTasks.perform {
-      try Task.checkCancellation()
-      if let pdfPage {
-        guard let source = PDFDocument(url: url) else {
-          throw ReadingPageDecodingError.invalidPDF
-        }
-        guard pdfPage >= 0, let page = source.page(at: pdfPage)?.copy() as? PDFPage else {
-          throw ReadingPageDecodingError.missingPage
-        }
-        let document = PDFDocument()
-        document.insert(page, at: 0)
-        // Materialize just this page on the worker. The displayed PDF must have
-        // no lazy file-backed streams that could contact a NAS during drawing.
-        guard let data = document.dataRepresentation(), let detached = PDFDocument(data: data)
-        else {
-          throw ReadingPageDecodingError.invalidPDF
-        }
-        _ = detached.page(at: 0)?.bounds(for: .mediaBox)
-        try Task.checkCancellation()
-        return .pdf(detached)
+    try await permits.acquire()
+    do {
+      let result = try await FileTasks.perform {
+        try autoreleasepool { try decode(url: url, pdfPage: pdfPage) }
       }
-      guard
-        let source = CGImageSourceCreateWithURL(
-          url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary)
-      else { throw ReadingPageDecodingError.invalidImage }
-      let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
-      let width = (properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue ?? 1
-      let height = (properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue ?? 1
-      let scale = min(1, sqrt(maximumPixels / max(1, width * height)))
-      let edge = max(1, Int(max(width, height) * scale))
-      guard
-        let image = CGImageSourceCreateThumbnailAtIndex(
-          source, 0,
-          [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: edge,
-            kCGImageSourceShouldCacheImmediately: true,
-          ] as CFDictionary)
-      else { throw ReadingPageDecodingError.invalidImage }
-      try Task.checkCancellation()
-      return .image(image)
+      await permits.release()
+      return result
+    } catch {
+      await permits.release()
+      throw error
     }
+  }
+  private static func decode(url: URL, pdfPage: Int?) throws -> DecodedReadingPage {
+    try Task.checkCancellation()
+    if let pdfPage {
+      guard let source = PDFDocument(url: url) else {
+        throw ReadingPageDecodingError.invalidPDF
+      }
+      guard pdfPage >= 0, let page = source.page(at: pdfPage)?.copy() as? PDFPage else {
+        throw ReadingPageDecodingError.missingPage
+      }
+      let document = PDFDocument()
+      document.insert(page, at: 0)
+      // Materialize just this page on the worker. The displayed PDF must have
+      // no lazy file-backed streams that could contact a NAS during drawing.
+      guard let data = document.dataRepresentation(), let detached = PDFDocument(data: data)
+      else {
+        throw ReadingPageDecodingError.invalidPDF
+      }
+      _ = detached.page(at: 0)?.bounds(for: .mediaBox)
+      try Task.checkCancellation()
+      return .pdf(detached)
+    }
+    guard
+      let source = CGImageSourceCreateWithURL(
+        url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary)
+    else { throw ReadingPageDecodingError.invalidImage }
+    let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+    let width = (properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue ?? 1
+    let height = (properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue ?? 1
+    let scale = min(1, sqrt(maximumPixels / max(1, width * height)))
+    let edge = max(1, Int(max(width, height) * scale))
+    guard
+      let image = CGImageSourceCreateThumbnailAtIndex(
+        source, 0,
+        [
+          kCGImageSourceCreateThumbnailFromImageAlways: true,
+          kCGImageSourceCreateThumbnailWithTransform: true,
+          kCGImageSourceThumbnailMaxPixelSize: edge,
+          kCGImageSourceShouldCacheImmediately: true,
+        ] as CFDictionary)
+    else { throw ReadingPageDecodingError.invalidImage }
+    try Task.checkCancellation()
+    return .image(image)
   }
 }
 
@@ -236,6 +253,10 @@ struct NativeReadingPage: View {
     var pdf: PDFView?
     private var currentImage: CGImage?
     private var currentPDF: PDFDocument?
+    var isAtMinimumZoom: Bool {
+      if let pdf, !pdf.isHidden { return pdf.scaleFactor <= pdf.minScaleFactor * 1.01 }
+      return scroll.zoomScale <= scroll.minimumZoomScale * 1.01
+    }
     private var laidOutSize = CGSize.zero
     override init(frame: CGRect) {
       super.init(frame: frame)

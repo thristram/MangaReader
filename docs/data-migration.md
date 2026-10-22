@@ -1,5 +1,9 @@
 # Data migration and file recovery
 
+## Translation recovery upgrade (2026-10-19)
+
+No MongoDB migration or API change is required. New image-addition organization journals include optional `originalMetadata` in the existing account-local journal JSON. Existing journals decode without that field. Recovery preserves newer descriptive metadata when the baseline proves media and folder-defining fields unchanged; already-committed media can finish without any metadata write. For old translation jobs, Retry or file recovery can infer the baseline from a unique persisted job/cache page plus the exact journaled file moves and verified digests. Additional append-only target pages already committed are retained, provided baseline canonical mappings are unchanged and the pending slot is free. The rebased metadata/baseline is written atomically before its API update; optional `priorMetadata` keeps the initial desired payload for audit and also decodes as absent on older records. Other legacy revision conflicts still need review. Keep cached translated images, job records and journals; do not delete them or re-import the chapter to retry.
+
 ## Existing comic folders → MangaReader
 
 Initial import does not assume existing folders already match the managed hierarchy. On Mac, select/drop a root and review discovered chapter candidates sequentially. Natural image filename ordering initializes reading order; author/work/series can be resolved manually. Unknown author becomes `other author`. PDF/video each remain a single chapter source file.
@@ -68,3 +72,7 @@ Downloads can be rebuilt from NAS; source files and metadata must be backed up i
 ## SwiftUI presentation update
 
 No database or snapshot schema migration is required. Existing owner directories, root bookmarks, Keychain bindings, media IDs and revisions remain valid. Reader order/alignment uses the existing pageAlignment field; saving order does not rename files. Separate cover files and bulk filename/organization plans remain pending. Preserve account commit journals during upgrades; Pending Organization can reconcile a filesMoved_metadataPending record only when the source is absent, destination exists and metadata revision still matches.
+
+## Mac image translation jobs
+
+No database migration is required for the optional page translation feature. Jobs/rendered-page caches live under the current owner's local `image-translations` folder; per-page archive commits use compatible organization journals. Preserve both when moving an unfinished library to another device. Running jobs restored after an app restart require Retry; successful pages and cached results are reused. The external translator's models, provider keys and deployment are managed separately.

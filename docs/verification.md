@@ -2,6 +2,115 @@
 
 This records checks actually performed for the first development milestone. It does not claim a completed P0 release or a live production deployment.
 
+## iPhone video presentation rendering — 2026-10-20
+
+The user reported the same black-screen symptom after the startup fix and found
+that a small cancelled dismissal immediately revealed the video. The previous
+readiness-only checks did not establish that pixels were visible through the actual
+presentation/layout hierarchy. Replace iPhone's nested AVPlayerViewController with
+a UIKit view whose backing layer is AVPlayerLayer; UIKit now owns output geometry
+directly. Observe that layer's readiness and size the canvas flexibly. Mac retains
+AVPlayerView and the existing shared transport.
+
+The final iPhone simulator suite passed, including three consecutive actual
+fullScreenCover presentations. Each checks window attachment, backing/presentation
+layer bounds and videoRect/readiness before any dismissal or resize gesture.
+Existing cancelled-load recovery, paused first frame, empty MP4 edits, decoded-frame
+backward seek, transport/completion, close/reopen, paging and collection stress pass.
+The Mac target also builds; project membership and whitespace checks pass.
+
+With Device Hub already open, the final test app was relaunched with a fresh
+synthetic offline MP4 containing four color blocks. Computer-use inspection showed
+those blocks at 0:00, before any tap/drag/resize interaction with preview. Pressing
+Play changed the overlay to Pause and advanced the position without moving the
+preview. Only the simulator/fixture account was used; this does not certify the
+user's physical iPhone or original MP4 files. There is no migration or media rewrite.
+
+## Video preview startup — 2026-10-20
+
+The reported case is primarily downloaded MP4s on iPhone. Previously `ready` was
+set from asset playability/duration before checking item status or AVKit's first
+displayed frame; the native output was mounted only afterward. The shared transport
+now attaches its item/output early, loads properties concurrently, primes the first
+nonempty video segment while paused, and separates requested playback from actual
+item/output readiness and `timeControlStatus`. Local-volume files skip streaming
+buffer prediction; Finder-mounted NAS volumes retain it. A reader-owned preparation
+task prevents a cancelled/recreated SwiftUI waiter from orphaning a pending item.
+
+The final full iPhone simulator reader suite passed with real synthetic H.264 MP4s:
+paused first-frame output, no clock advance before output, a two-second empty
+leading MP4 edit, repeated cancelled/recreated load waiters, reset isolation,
+coalesced forward/backward seeking and decoded-frame timestamps, completion through
+the production reader's shared transport, unsupported-file recovery, and close/reopen.
+The leading-edit fixture initially failed when using only `track.timeRange.start`;
+using the first nonempty segment's target start resolves that case. Existing paging,
+collection stress, tabs and full-screen fit checks also passed. These tests do not
+identify the encoding/timeline structure of the user's original files.
+
+The production Mac build passed; shared video tests also exercise paused native
+first-frame readiness and the playback gate. `MANGA_READER_CONTROLS_ONLY=1 python3
+scripts/verify-mac-auth-ui.py .build/xcode-swiftui-mac` runs the focused native check.
+No video files are rewritten, re-encoded or re-downloaded by this fix. No database
+or API migration is required. Tests use a separate fixture account/cache and no
+production media or service records.
+
+## Import shared-source checks — 2026-10-20
+
+`Checking shared source files…` now uses the owner/metadata-generation-scoped
+SourceReferenceIndex rather than resolving every other media file. Root bindings
+are checked lazily, cached roots first, with early exit on a shared reference.
+Disjoint canonical roots skip their entire page list. Relevant roots reuse resolved
+directory prefixes and inspect directory entries for differently named symlinks;
+parent-listing denial keeps the per-reference fallback for standalone-file grants.
+Filesystem results are not persisted or reused across checks. Concurrent metadata
+or binding changes cannot authorize a move from a stale negative answer.
+
+Core suite: **54 tests, zero failures, one second-volume test skipped**. The new
+20,000-reference fixture required **21 directory resolutions, 20 directory
+listings and zero individual file resolutions**. A disjoint root required zero
+directory/file probes. These are deterministic operation counts, not an
+end-to-end NAS timing claim. Tests cover nested roots, directory/root/file symlinks,
+externally changed symlink targets, path escapes, media exclusion, Unicode and
+PDF/video references.
+
+Mac and iPhone Simulator builds passed. The full native suite passed, including a
+new actual import/commit that retains an original referenced through a differently
+named symlink, plus metadata-index invalidation and root rebinding. Existing
+nested/standalone imports, sharing, failed metadata recovery and translation
+regressions passed. Project membership/generation and whitespace checks passed.
+All new media/API fixtures are synthetic; no production files or API records were
+changed. Cold bookmark resolution and network directory access can still wait on
+the NAS. No schema or data migration is needed. See [ADR 0016](adr/0016-import-source-reference-index.md).
+
+Codebase Memory discovery used the existing graph with source fallback for stale
+coverage. A final full refresh was attempted but its worker could not verify active
+daemon coordination; the existing graph remains readable. New/changed symbols were
+verified directly from source and the builds/tests above, not from a refreshed graph.
+
+## Organization preparation audit — 2026-10-19
+
+Ordinary exclusive same-volume imports already use FileCommit's rename path. Chapter/language reorganization uses FileOrganization's per-file copy/digest/API/cleanup transaction. A plain translated-page append previously resolved every existing page's filesystem path, opened unrelated storage bindings for global sharing checks, and attempted empty-directory cleanup even though those files had not moved.
+
+Image addition now skips unchanged root/path references before filesystem access, resolves the global sharing set only for actual relocations, batches changed-path checks on the background worker and omits source-directory cleanup for a one-page append. Queue progress distinguishes destination/preparation/copy/metadata/verification. Native tests verify the five subsequent commits of a six-page translation each contain one file and no unchanged-directory cleanup, alongside existing shared-file and failed-metadata recovery regressions. Mac build, full native suite, project verification and diff checks passed.
+
+A read-only microbenchmark against 20 unchanged references on the user's currently mounted, warm-cache NAS measured **2.97 ms** for the previous path checks and **0.01 ms** for an in-memory unchanged-reference skip. No comic contents were read or files modified. This is not an end-to-end organization benchmark and does not establish that path checks dominate the reported stall; global binding resolution, verified content transfer and metadata/API work are separate. Same-share whole-directory rename for the FileOrganization transaction is not implemented by this change.
+
+## Translation recovery — 2026-10-19
+
+The repeat failure was diagnosed against the three actual pending records (read-only, no comic titles or credentials recorded here). Their desired media omitted the preceding committed page: pending pages 10/16/6 were based on only 8/14/4 target files, while the current chapters already had 9/15/5. The updated inference proved all three safe to rebase, preserving every current path and canonical mapping and adding only the cached page. The earlier exact-baseline test did not cover this stale-plan shape.
+
+After rebuilding/running the real Mac app and the user completing its existing sign-in flow, all three **Resume & Finish** actions were executed successfully. Each sheet closed on success and its translation organization row disappeared. Translation Queue visibly showed **10/17, 16/28 and 6/20** with “File commit recovered. Retry to continue the remaining pages.” and the old errors cleared. A fresh service sync was triggered. These actions finished only already-rendered cached-page commits; they did not submit new comic images or start the remaining model jobs. Other unrelated old import-recovery records were left untouched.
+
+Read-back verification confirmed all three journals were `complete`, the fresh synchronized target metadata matched their recovered payloads, all prior target paths were preserved, queue errors were empty and each published PNG matched its journal SHA-256 digest. The original desired payloads remain available as `priorMetadata`.
+
+AppSession now merges polling snapshots by revision and writes the merged cache in sequence. A mock stale snapshot taken before a page commit is applied after that commit; both memory and snapshot.json retain the committed media. The legacy partial-translation test now removes a previously committed page from its old plan, then verifies Retry retains it, adds the cached page, saves the rebased baseline plus `priorMetadata`, and completes all missing slots without extra image submissions. A core regression stages/rebases/reloads the plan, verifies an interrupted rebase remains recoverable, and rejects a stale attempt to replace the journal. Core suite: **49 tests, zero failures, one second-volume test skipped**. Mac/iPhone builds and the full native suite passed.
+
+Reproduced a failed translated-page metadata commit followed by a newer description/text-localization edit before Retry. Recovery retains the edit, reuses the cached PNG and finishes all six pages with six image submissions total. Also replayed an older journal without a baseline after the server already held its desired media: finishing preserves the newer description and revision, with no metadata rewrite. Core checks cover conflicting roots, paths/order, alignments, media language, original title and parents; these remain blocked, as does an unproven generic legacy revision conflict. Mac/iPhone builds, the isolated native integration suite and project verification passed. Core suite: 48 tests, zero failures, one cross-volume test skipped because no isolated second volume was provided. No real comic files or translation-provider requests were used.
+
+The follow-up missing-snapshot regression removes `originalMetadata` from an unfinished translation journal, edits the chapter description/text localization, restarts the queue and recovers through the File Management Queue action before Retry. It proves all source moves, retains newer text and completes six pages with six image submissions total. A second case starts with three existing target slots, fails the first new page commit, removes its snapshot, edits the description and retries directly from Translation Queue. It preserves the three existing pages and needs only three image submissions for the missing slots. Unit tests cover first-language folder relocation, existing identity/sparse alignments, unexplained operations, competing canonical slots and modified shared-source bytes. These tests use disposable synthetic files and mock APIs only.
+
+## Initial milestone
+
 | Check | Result |
 | --- | --- |
 | Node dependencies / lockfile | npm installation succeeded; audit reported zero known vulnerabilities at installation |
@@ -79,3 +188,7 @@ Both Mac arm64 Debug and signed iPhone Simulator builds passed. Eight MangaCore 
 Native inspection exercised the Mac sidebar/unified toolbar, every library/activity/settings page family, comic detail, edit/create/tag-search/page-order sheets, recursive import selection and sequential review. The final active sidebar has neutral selection with pink text. The image reader resumed canonical page 3 while the selected Chinese media lacked that page, correctly displaying original page 3; advancing displayed original page 4 with the matching counter. A six-page PDF opened at page 1 in the same full-height native pager. iPhone portrait simulator capture confirms the expanded native large title, two-column cards and native floating tabs/reading accessory; search uses the system pull-down drawer; iPhone-on-Mac inspection exercised navigation, detail, browse/settings and reader/overview in Apple's iPad compatibility layout.
 
 All review data/media are synthetic in separate preview targets and account caches. The previews contain invalid OAuth configuration, never restore production credentials and schedule no server sync. Page progress/actions may report the expected local identity error when attempting a write; those attempts are not evidence of production persistence. No real NAS move/download, live Ollama response or new production auth/API/database acceptance is claimed here. Physical-device swipe/pinch, accessibility and the pending storage/sync features are tracked separately in [UI review](apple/ui-verification.md) and [implementation status](implementation-status.md). Final captures are saved in [the native gallery](mock/native/index.html); the original editable mock is preserved.
+
+## 2026-10-18: Mac manga image translation
+
+The native Mac harness covers the upstream multipart/config/locale contract through synthetic HTTP responses; offline enqueue refusal; progressive media slots and original fallback; persisted cache/retry; recovery after metadata failure without translating the cached page again; existing partial translations; malformed PNG refusal; PDF rasterization; and in-flight cancellation/account restore. Native inspection covers the four organization sidebar children, settings fields/Test Connection, unavailable-service confirmation with disabled Translate Manga, chapter-group progress/error/retry, thumbnail collection and zoomable output preview. The locally running `http://localhost:8000` API passed route compatibility through the actual settings Test Connection and its OpenAPI schema. Actual GPU/provider translation quality has not been benchmarked by these fixture tests. Real comic data was not submitted.

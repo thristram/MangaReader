@@ -4,6 +4,211 @@ import XCTest
 @testable import MangaCore
 
 final class StorageWorkflowTests: XCTestCase {
+  func testStaleTranslationPlanPreservesPriorSuccessAndPersistsRebase() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let root = directory.appendingPathComponent("archive")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try LibraryDestinationIdentity.bind(folder: root, libraryId: "owner", destinationId: "root")
+    let cache = directory.appendingPathComponent("3.png")
+    try Data("translated third page".utf8).write(to: cache)
+    let original = MediaVersion(id: "original", language: "ja", kind: "images", storageRootId: "root",
+      relativePaths: ["Chapter/ja/1.png", "Chapter/ja/2.png", "Chapter/ja/3.png"], pageCount: 3)
+    var target = MediaVersion(id: "target", language: "zh", kind: "images", storageRootId: "root",
+      relativePaths: ["Chapter/zh/1.png", "Chapter/zh/3.png"], pageCount: 2)
+    target.pageAlignment = [0, nil, 1]
+    let desired = MetadataInput(kind: .chapter, title: "Chapter", originalLanguage: "ja", media: [original, target])
+    let journals = directory.appendingPathComponent("journals")
+    let prepared = try FileOrganization.prepare(entityId: "chapter", revision: 2, metadata: desired,
+      libraryId: "owner", rootId: "root", root: root, sourceRootIds: ["root"],
+      files: [.init(source: cache, relativePath: "Chapter/zh/3.png", keepSource: true)], directory: journals)
+    let stale = try FileOrganization.stage(prepared, in: journals)
+    var current = desired
+    current.description = "Newer metadata"
+    current.media[1].relativePaths = ["Chapter/zh/1.png", "Chapter/zh/2.png"]
+    current.media[1].pageAlignment = [0, 1, nil]
+    let recovered = try XCTUnwrap(stale.recoveringLegacyImageAddition(current: current, mediaId: "target",
+      language: "zh", canonical: 2, count: 3, cachedSource: cache, roots: ["root": root]))
+    let saved = try FileOrganization.recordRecovery(stale, recovered: recovered, in: journals)
+    XCTAssertNotNil(saved.originalMetadata)
+    XCTAssertEqual(saved.priorMetadata?.media[1].relativePaths, desired.media[1].relativePaths)
+    let restored = try FileOrganization.read(saved.id, in: journals)
+    guard case .update(let merged) = try restored.recovery(current: current, revision: 3) else {
+      return XCTFail("Interrupted rebase did not retain a recoverable metadata payload")
+    }
+    XCTAssertEqual(merged.description, current.description)
+    XCTAssertEqual(merged.media[1].relativePaths, ["Chapter/zh/1.png", "Chapter/zh/2.png", "Chapter/zh/3.png"])
+    XCTAssertEqual(merged.media[1].pageAlignment, [0, 1, 2])
+    XCTAssertThrowsError(try FileOrganization.recordRecovery(stale, recovered: recovered, in: journals))
+    let staged = try FileOrganization.stage(restored, in: journals)
+    try FileOrganization.finish(staged, in: journals)
+    XCTAssertEqual(try FileOrganization.read(staged.id, in: journals).phase, "complete")
+    XCTAssertTrue(FileManager.default.fileExists(atPath: cache.path))
+  }
+
+  func testLegacyTranslationRecoveryProvesOriginalMovesAndKeepsNewText() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let source = directory.appendingPathComponent("source")
+    let archive = directory.appendingPathComponent("archive")
+    try FileManager.default.createDirectory(at: source.appendingPathComponent("Chapter"), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: archive, withIntermediateDirectories: true)
+    let first = source.appendingPathComponent("Chapter/1.png")
+    let second = source.appendingPathComponent("Chapter/2.png")
+    let cached = directory.appendingPathComponent("translated.png")
+    try Data("first".utf8).write(to: first)
+    try Data("second".utf8).write(to: second)
+    try Data("translated".utf8).write(to: cached)
+    let original = MetadataInput(kind: .chapter, title: "Chapter", originalLanguage: "ja",
+      media: [.init(id: "original", language: "ja", kind: "images", storageRootId: "source",
+        relativePaths: ["Chapter/1.png", "Chapter/2.png"], pageCount: 2)])
+    var desired = original
+    desired.media[0].storageRootId = "archive"
+    desired.media[0].relativePaths = ["Chapter/ja/1.png", "Chapter/ja/2.png"]
+    var translation = MediaVersion(id: "translation", language: "en", kind: "images", storageRootId: "archive",
+      relativePaths: ["Chapter/en/translated.png"], pageCount: 1)
+    translation.pageAlignment = [0, nil]
+    desired.media.append(translation)
+    let files = try [
+      OrganizationFile(source: first, relativePath: "Chapter/ja/1.png", keepSource: false),
+      OrganizationFile(source: second, relativePath: "Chapter/ja/2.png", keepSource: true),
+      OrganizationFile(source: cached, relativePath: "Chapter/en/translated.png", keepSource: true),
+    ].map { file in
+      var file = file
+      file.digest = try FileInventory.digest(URL(fileURLWithPath: file.source))
+      return file
+    }
+    let plan = OrganizationJournal(id: "job", libraryId: "owner", entityId: "chapter", revision: 1,
+      rootId: "archive", root: archive.path, sourceRootIds: ["source"], metadata: desired,
+      files: files, phase: "filesReady_metadataPending")
+    let roots = ["source": source, "archive": archive]
+    func recover(_ current: MetadataInput, plan: OrganizationJournal = plan) throws -> OrganizationJournal? {
+      try plan.recoveringLegacyImageAddition(current: current, mediaId: "translation", language: "en",
+        canonical: 0, count: 2, cachedSource: cached, roots: roots)
+    }
+    var edited = original
+    edited.description = "New description"
+    edited.localizations["fr"] = .init(title: "New title translation")
+    let proven = try XCTUnwrap(recover(edited))
+    guard case .update(let merged) = try proven.recovery(current: edited, revision: 2) else {
+      return XCTFail("Proven legacy translation did not merge")
+    }
+    XCTAssertEqual(merged.description, edited.description)
+    XCTAssertEqual(merged.localizations, edited.localizations)
+    XCTAssertEqual(merged.media[0].relativePaths, desired.media[0].relativePaths)
+    for field in ["path", "alignment", "language", "title", "author"] {
+      var conflict = edited
+      switch field {
+      case "path": conflict.media[0].relativePaths.reverse()
+      case "alignment": conflict.media[0].pageAlignment = [1, 0]
+      case "language": conflict.media[0].language = "fr"
+      case "title": conflict.title = "Renamed"
+      default: conflict.authorId = "another-author"
+      }
+      XCTAssertNil(try recover(conflict), "Unexpected legacy merge: " + field)
+    }
+    var unexplained = plan
+    unexplained.files.append(OrganizationFile(source: cached, relativePath: "unrelated.png", keepSource: false))
+    XCTAssertNil(try recover(edited, plan: unexplained))
+    // Shared originals must also match the digest; keepSource must not bypass verification.
+    try Data("modified shared source".utf8).write(to: second)
+    XCTAssertThrowsError(try recover(edited))
+  }
+
+  func testLegacyTranslationRecoveryKeepsExistingPagesAndAlignment() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let cached = directory.appendingPathComponent("translated.png")
+    try Data("translated".utf8).write(to: cached)
+    var existing = MediaVersion(id: "translation", language: "en", kind: "images", storageRootId: "archive",
+      relativePaths: ["Chapter/en/existing.png"], pageCount: 1)
+    let original = MediaVersion(id: "original", language: "ja", kind: "images", storageRootId: "archive",
+      relativePaths: ["Chapter/ja/1.png", "Chapter/ja/2.png"], pageCount: 2)
+    for sparse in [false, true] {
+      let canonical = sparse ? 0 : 1
+      existing.pageAlignment = sparse ? [nil, 0] : nil
+      var current = MetadataInput(kind: .chapter, title: "Chapter", originalLanguage: "ja", media: [original, existing])
+      var desired = current
+      desired.media[1].relativePaths.append("Chapter/en/translated.png")
+      desired.media[1].pageCount = 2
+      desired.media[1].pageAlignment = sparse ? [1, 0] : [0, 1]
+      var file = OrganizationFile(source: cached, relativePath: "Chapter/en/translated.png", keepSource: true)
+      file.digest = try FileInventory.digest(cached)
+      let plan = OrganizationJournal(id: "job", libraryId: "owner", entityId: "chapter", revision: 1,
+        rootId: "archive", root: directory.path, sourceRootIds: ["archive"], metadata: desired,
+        files: [file], phase: "filesReady_metadataPending")
+      current.description = "New description"
+      let recovered = try XCTUnwrap(plan.recoveringLegacyImageAddition(current: current, mediaId: "translation",
+        language: "en", canonical: canonical, count: 2, cachedSource: cached, roots: ["archive": directory]))
+      guard case .update(let merged) = try recovered.recovery(current: current, revision: 2) else {
+        return XCTFail("Existing target pages blocked legacy recovery")
+      }
+      XCTAssertEqual(merged.media[1].relativePaths.first, existing.relativePaths.first)
+      XCTAssertEqual(merged.media[1].pageAlignment, desired.media[1].pageAlignment)
+      var competing = current
+      competing.media[1].pageAlignment = sparse ? [0, nil] : [nil, 0]
+      XCTAssertNil(try plan.recoveringLegacyImageAddition(current: competing, mediaId: "translation",
+        language: "en", canonical: canonical, count: 2, cachedSource: cached, roots: ["archive": directory]))
+    }
+  }
+
+  func testOrganizationRecoveryPreservesTextEditsAndRejectsFileConflicts() throws {
+    let original = MetadataInput(kind: .chapter, title: "Chapter", originalLanguage: "ja",
+      media: [.init(id: "original", language: "ja", kind: "images", storageRootId: "root",
+        relativePaths: ["Chapter/1.png", "Chapter/2.png"], pageCount: 2)])
+    var desired = original
+    desired.media[0].relativePaths = ["Chapter/ja/1.png", "Chapter/ja/2.png"]
+    desired.media.append(.init(id: "translation", language: "en", kind: "images",
+      storageRootId: "root", relativePaths: ["Chapter/en/1.png"], pageCount: 1))
+    var journal = OrganizationJournal(id: "job", libraryId: "owner", entityId: "chapter",
+      revision: 1, rootId: "root", root: "/archive", sourceRootIds: ["root"],
+      metadata: desired, originalMetadata: original, files: [], phase: "filesReady_metadataPending")
+    var edited = original
+    edited.description = "New description"
+    edited.localizations["fr"] = .init(title: "Translated title")
+    edited.tagIds = ["new-tag"]
+    edited.sources = [.init(site: "pixiv", value: "123")]
+    edited.nsfw = true
+    guard case .update(let merged) = try journal.recovery(current: edited, revision: 2) else {
+      return XCTFail("Unrelated metadata edits should merge")
+    }
+    XCTAssertEqual(merged.description, edited.description)
+    XCTAssertEqual(merged.localizations, edited.localizations)
+    XCTAssertEqual(merged.tagIds, edited.tagIds)
+    XCTAssertEqual(merged.sources.first?.value, "123")
+    XCTAssertTrue(merged.nsfw)
+    XCTAssertEqual(merged.media[0].relativePaths, desired.media[0].relativePaths)
+    XCTAssertEqual(merged.media.last?.id, "translation")
+    for field in ["path", "root", "alignment", "language", "title", "author", "work"] {
+      var conflict = edited
+      switch field {
+      case "path": conflict.media[0].relativePaths.reverse()
+      case "root": conflict.media[0].storageRootId = "elsewhere"
+      case "alignment": conflict.media[0].pageAlignment = [1, 0]
+      case "language": conflict.media[0].language = "zh"
+      case "title": conflict.title = "Renamed chapter"
+      case "author": conflict.authorId = "new-author"
+      default: conflict.workId = "new-work"
+      }
+      guard case .conflict = try journal.recovery(current: conflict, revision: 2) else {
+        return XCTFail("Unsafe recovery accepted: " + field)
+      }
+    }
+    // Old journals have no baseline. Already-committed references can finish without a write;
+    // an uncommitted journal cannot infer what changed and must still stop.
+    journal.originalMetadata = nil
+    let legacy = try JSONDecoder().decode(OrganizationJournal.self, from: JSONEncoder().encode(journal))
+    XCTAssertNil(legacy.originalMetadata)
+    guard case .conflict = try legacy.recovery(current: edited, revision: 2) else {
+      return XCTFail("Legacy journal merged without a baseline")
+    }
+    edited.media = desired.media
+    guard case .committed = try legacy.recovery(current: edited, revision: 3) else {
+      return XCTFail("Committed media with newer text was not recognized")
+    }
+  }
+
   func testMediaLanguageCorrectionChangesOnlyMediaIdentityLanguageAndFolder() throws {
     var original = MediaVersion(
       id: "original", language: "ja", kind: "images", storageRootId: "root",
@@ -325,6 +530,71 @@ final class StorageWorkflowTests: XCTestCase {
     try FileOrganization.finish(staged, in: journals)
     XCTAssertTrue(FileManager.default.fileExists(atPath: first.path))
     XCTAssertFalse(FileManager.default.fileExists(atPath: second.path))
+  }
+
+  func testFolderCleanupIsBoundedEmptyOnlyAndRejectsSymlinks() throws {
+    let root = try directory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let fm = FileManager.default
+    let chapter = root.appendingPathComponent("Author/Chapter")
+    let ja = chapter.appendingPathComponent("ja")
+    let en = chapter.appendingPathComponent("en")
+    try fm.createDirectory(at: ja, withIntermediateDirectories: true)
+    try fm.createDirectory(at: en, withIntermediateDirectories: true)
+    let media = MediaVersion(language: "ja", kind: "images", storageRootId: "root",
+      relativePaths: ["Author/Chapter/ja/1.png"], pageCount: 1)
+    let plan = EmptyMediaFolder.plan(media: [media], roots: ["root": root], chapterTitle: "Chapter")
+    try EmptyMediaFolder.removeEmpty(plan)
+    XCTAssertFalse(fm.fileExists(atPath: ja.path))
+    XCTAssertTrue(fm.fileExists(atPath: en.path))
+    try Data("unrelated".utf8).write(to: en.appendingPathComponent("notes.txt"))
+    try EmptyMediaFolder.removeEmpty([EmptyMediaFolder(root: root, relativePath: "Author/Chapter/en")])
+    XCTAssertTrue(fm.fileExists(atPath: en.appendingPathComponent("notes.txt").path))
+    try fm.removeItem(at: en)
+    try EmptyMediaFolder.removeEmpty(plan)
+    XCTAssertFalse(fm.fileExists(atPath: chapter.path))
+    XCTAssertTrue(fm.fileExists(atPath: root.appendingPathComponent("Author").path))
+    try fm.createSymbolicLink(at: root.appendingPathComponent("link"), withDestinationURL: root.appendingPathComponent("Author"))
+    XCTAssertThrowsError(try EmptyMediaFolder.removeEmpty([EmptyMediaFolder(root: root, relativePath: "link")]))
+    XCTAssertThrowsError(try EmptyMediaFolder.removeEmpty([EmptyMediaFolder(root: root, relativePath: ".")]))
+  }
+  func testRecycleCleanupWaitsForCommitAndSurvivesJournalReload() throws {
+    let root = try directory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let fm = FileManager.default
+    try LibraryDestinationIdentity.bind(folder: root, libraryId: "owner", destinationId: "root")
+    let source = root.appendingPathComponent("Author/Chapter/ja/1.png")
+    try fm.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("page".utf8).write(to: source)
+    let media = MediaVersion(language: "ja", kind: "images", storageRootId: "root",
+      relativePaths: ["Author/Chapter/ja/1.png"], pageCount: 1)
+    let journals = root.appendingPathComponent("journals")
+    let journal = try FileRecycle.begin(entityId: "chapter", revision: 1,
+      files: [ArchiveFile(root: root, rootId: "root", libraryId: "owner", relativePath: media.relativePaths[0])],
+      journalDirectory: journals, cleanupFolders: EmptyMediaFolder.plan(media: [media], roots: ["root": root], chapterTitle: "Chapter"))
+    XCTAssertTrue(fm.fileExists(atPath: source.deletingLastPathComponent().path))
+    let reloaded = try JSONDecoder().decode(RecycleJournal.self,
+      from: Data(contentsOf: journals.appendingPathComponent(journal.id + ".json")))
+    try FileRecycle.rollback(reloaded, in: journals)
+    XCTAssertEqual(try Data(contentsOf: source), Data("page".utf8))
+    let committed = try FileRecycle.begin(entityId: "chapter", revision: 1,
+      files: [ArchiveFile(root: root, rootId: "root", libraryId: "owner", relativePath: media.relativePaths[0])],
+      journalDirectory: journals, cleanupFolders: reloaded.cleanupFolders ?? [])
+    try FileRecycle.finish(committed, in: journals)
+    XCTAssertFalse(fm.fileExists(atPath: root.appendingPathComponent("Author/Chapter").path))
+    XCTAssertTrue(fm.fileExists(atPath: root.appendingPathComponent("Recycle/" + committed.id + "/" + media.relativePaths[0]).path))
+  }
+
+  func testSingleChapterNamedAfterLanguageNeverPrunesAuthor() throws {
+    let root = try directory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("Author/en"), withIntermediateDirectories: true)
+    let media = MediaVersion(language: "en", kind: "images", storageRootId: "root",
+      relativePaths: ["Author/en/1.png"], pageCount: 1)
+    let cleanup = EmptyMediaFolder.plan(media: [media], roots: ["root": root], chapterTitle: "en")
+    XCTAssertEqual(cleanup.map(\.relativePath), ["Author/en"])
+    try EmptyMediaFolder.removeEmpty(cleanup)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("Author").path))
   }
 
 }

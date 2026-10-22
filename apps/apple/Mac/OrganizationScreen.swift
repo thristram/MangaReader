@@ -3,19 +3,25 @@ import Foundation
 import MangaCore
 import SwiftUI
 
-struct OrganizationRecord: Identifiable {
+struct OrganizationRecord: Identifiable, Sendable {
   var id: String
   var source: String
   var destination: String
   var phase: String
   var json: URL
 }
-struct RecycleRecord: Identifiable {
+struct RecycleRecord: Identifiable, Sendable {
   let journal: RecycleJournal
   let directory: URL
   var id: String { journal.id }
 }
+private struct OrganizationSnapshot: Sendable {
+  let records: [OrganizationRecord]
+  let plans: [OrganizationJournal]
+  let recycle: [RecycleRecord]
+}
 struct OrganizationScreen: View {
+  var page: LibraryPage = .organization
   @EnvironmentObject private var library: LibraryUIModel
   @EnvironmentObject private var session: AppSession
   @State private var records: [OrganizationRecord] = []
@@ -26,17 +32,27 @@ struct OrganizationScreen: View {
   @State private var selectedRecycle: RecycleRecord?
   @State private var recovering = false
   @State private var status = ""
+  @State private var recoveryFailed = false
+  @State private var refreshToken = 0
+  @State private var loading = false
   var body: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 24) {
-        FileQueuePanel(queue: library.fileQueue)
+      LazyVStack(alignment: .leading, spacing: 24) {
+        if page == .organization || page == .fileManagement { FileQueuePanel(queue: library.fileQueue) }
+        if page == .organization || page == .unorganized {
+          TemporaryOrganizationPanel(queue: library.fileQueue, refreshToken: refreshToken, onFinished: load)
+        }
+        if page != .unorganized {
         HStack {
-          Text("Background imports and file recovery.").foregroundStyle(.secondary)
+          Text(page == .commitHistory ? "File commits and recovery history." : "Background imports and file recovery.").foregroundStyle(.secondary)
           Spacer()
           Button("Refresh", systemImage: "arrow.clockwise", action: load)
         }
-        if records.isEmpty && recycleRecords.isEmpty && languagePlans.isEmpty
-          && library.fileQueue.items.isEmpty
+        if !status.isEmpty { Text(status).font(.callout).foregroundStyle(.secondary).textSelection(.enabled) }
+        if loading { ProgressView("Loading file history…") }
+        if !loading && records.isEmpty && recycleRecords.isEmpty && languagePlans.isEmpty
+          && (page == .commitHistory || library.fileQueue.items.isEmpty)
+          && (page != .organization || library.temporaryOrganizationRows().isEmpty)
         {
           ContentUnavailableView(
             "No pending file changes", systemImage: "folder.badge.checkmark",
@@ -47,24 +63,33 @@ struct OrganizationScreen: View {
           HStack {
             VStack(alignment: .leading, spacing: 6) {
               Text(plan.metadata.title).font(.headline)
-              Text("Language folders · \(plan.files.count) files · recovery available").font(
+              Text("File organization · \(plan.files.count) files · " + (plan.phase == "complete" ? "completed" : "recovery available")).font(
                 .caption
               ).foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Review") { selectedPlan = plan }
+            if plan.phase != "complete" {
+              Button("Review") {
+                status = ""
+                recoveryFailed = false
+                selectedPlan = plan
+              }.disabled(loading || !library.organizingChapterIds.isEmpty)
+            } else { Image(systemName: "checkmark.circle").foregroundStyle(.green) }
           }.padding(20).background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
         }
         ForEach(recycleRecords) { record in
           VStack(alignment: .leading, spacing: 12) {
             HStack {
-              Label("Comic deletion needs review", systemImage: "trash").font(.headline)
+              Label(["complete", "rolledBack"].contains(record.journal.phase)
+                ? "Comic deletion · " + record.journal.phase : "Comic deletion needs review", systemImage: "trash").font(.headline)
               Spacer()
-              Button("Review") { selectedRecycle = record }
+              if !["complete", "rolledBack"].contains(record.journal.phase) {
+                Button("Review") { selectedRecycle = record }.disabled(!library.organizingChapterIds.isEmpty)
+              }
             }
             Text(library.entity(record.journal.entityId).map(library.title) ?? "Deleted comic")
               .foregroundStyle(.secondary)
-            Text("\(record.journal.entries.count) files in Recycle").font(.caption)
+            Text("\(record.journal.entries.count) file records").font(.caption)
           }.padding(20).frame(maxWidth: .infinity, alignment: .leading).background(
             .quaternary, in: RoundedRectangle(cornerRadius: 12))
         }
@@ -77,7 +102,9 @@ struct OrganizationScreen: View {
                   ? "checkmark.circle" : "exclamationmark.triangle"
               ).font(.headline)
               Spacer()
-              if record.phase != "complete" { Button("Review & Recover") { selected = record } }
+              if record.phase != "complete" {
+                Button("Review & Recover") { selected = record }.disabled(!library.organizingChapterIds.isEmpty)
+              }
             }
             Text(record.source).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
             Image(systemName: "arrow.down").foregroundStyle(.pink)
@@ -86,8 +113,14 @@ struct OrganizationScreen: View {
           }.padding(20).frame(maxWidth: .infinity, alignment: .leading).background(
             .quaternary, in: RoundedRectangle(cornerRadius: 12))
         }
+        }
+        if page == .unorganized && library.temporaryOrganizationRows().isEmpty {
+          ContentUnavailableView("Everything is organized", systemImage: "folder.badge.checkmark")
+        }
       }.padding(28)
     }.onAppear(perform: load)
+      .onChange(of: page) { _, _ in load() }
+      .onChange(of: library.organizingChapterIds) { _, active in if active.isEmpty { load() } }
       .sheet(item: $selected) { record in
         VStack(alignment: .leading, spacing: 20) {
           Text("Review Commit Recovery").font(.system(size: 23, weight: .semibold))
@@ -117,19 +150,23 @@ struct OrganizationScreen: View {
       }
       .sheet(item: $selectedPlan) { plan in
         VStack(alignment: .leading, spacing: 20) {
-          SheetHeading("Resume Language Organization")
+          SheetHeading("Resume File Organization")
           Text(
-            "Finish organizing every language folder, update the chapter, then remove verified source files. Existing unrelated files are preserved."
+            "Finish this file plan, update the chapter, then remove verified source files. Recycle copies and unrelated files are preserved."
           ).foregroundStyle(.secondary)
           Text(plan.metadata.title).font(.headline)
           Text(plan.root).font(.caption.monospaced()).textSelection(.enabled)
           Text("\(plan.files.count) files · \(plan.metadata.media.count) media versions")
-          if !status.isEmpty { Text(status).font(.caption) }
+          if !status.isEmpty {
+            Label(status, systemImage: recoveryFailed ? "exclamationmark.triangle" : "checkmark.circle")
+              .font(.callout).foregroundStyle(recoveryFailed ? Color.red : Color.secondary)
+              .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+          }
           HStack {
             Button("Close") { selectedPlan = nil }.disabled(recovering)
             Spacer()
             Button(recovering ? "Resuming…" : "Resume & Finish") { recoverLanguages(plan) }
-              .buttonStyle(.borderedProminent).disabled(recovering)
+              .buttonStyle(.borderedProminent).disabled(recovering || !library.organizingChapterIds.isEmpty)
           }
         }.padding(28).frame(width: 600)
       }
@@ -161,91 +198,80 @@ struct OrganizationScreen: View {
       }
   }
   private func load() {
-    if let directory = session.cacheDirectory?.appendingPathComponent("organization-journals"),
-      let urls = try? FileManager.default.contentsOfDirectory(
-        at: directory, includingPropertiesForKeys: nil)
-    {
-      languagePlans = urls.compactMap { url in
-        guard let data = try? Data(contentsOf: url),
-          let plan = try? JSONDecoder().decode(OrganizationJournal.self, from: data),
-          plan.phase != "complete"
-        else { return nil }
-        return plan
+    refreshToken += 1
+    let token = refreshToken
+    let owner = session.account?.ownerId
+    guard let cache = session.cacheDirectory else { return }
+    let history = page == .commitHistory
+    let pendingOnly = page == .fileManagement
+    loading = true
+    Task {
+      do {
+        let snapshot = try await FileTasks.perform { () -> OrganizationSnapshot in
+          let fm = FileManager.default
+          func files(_ name: String) throws -> [URL] {
+            let folder = cache.appendingPathComponent(name)
+            guard fm.fileExists(atPath: folder.path) else { return [] }
+            return try fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])
+              .filter { $0.pathExtension == "json" }
+              .sorted {
+                ((try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)
+                  > ((try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)
+              }
+          }
+          let plans = try files("organization-journals").compactMap { url -> OrganizationJournal? in
+            guard let data = try? Data(contentsOf: url), let plan = try? JSONDecoder().decode(OrganizationJournal.self, from: data),
+              history || plan.phase != "complete" else { return nil }
+            return plan
+          }
+          let recycleDirectory = cache.appendingPathComponent("delete-journals")
+          let recycle = try files("delete-journals").compactMap { url -> RecycleRecord? in
+            guard let data = try? Data(contentsOf: url), let journal = try? JSONDecoder().decode(RecycleJournal.self, from: data),
+              history || !["complete", "rolledBack"].contains(journal.phase) else { return nil }
+            return RecycleRecord(journal: journal, directory: recycleDirectory)
+          }
+          let records = try files("commit-journals").compactMap { url -> OrganizationRecord? in
+            guard !url.lastPathComponent.contains("-metadata"), let data = try? Data(contentsOf: url),
+              let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = value["id"] as? String, let phase = value["phase"] as? String,
+              !pendingOnly || phase != "complete" else { return nil }
+            return OrganizationRecord(id: id, source: value["source"] as? String ?? "",
+              destination: value["destination"] as? String ?? "", phase: phase, json: url)
+          }
+          return OrganizationSnapshot(records: records, plans: plans, recycle: recycle)
+        }
+        guard owner == session.account?.ownerId, token == refreshToken else { return }
+        records = snapshot.records
+        languagePlans = snapshot.plans
+        recycleRecords = snapshot.recycle
+        loading = false
+      } catch {
+        guard owner == session.account?.ownerId, token == refreshToken else { return }
+        status = error.localizedDescription
+        loading = false
       }
-    } else {
-      languagePlans = []
     }
-    if let directory = session.cacheDirectory?.appendingPathComponent("delete-journals"),
-      let files = try? FileManager.default.contentsOfDirectory(
-        at: directory, includingPropertiesForKeys: nil)
-    {
-      recycleRecords = files.compactMap { url in
-        guard url.pathExtension == "json", let data = try? Data(contentsOf: url),
-          let journal = try? JSONDecoder().decode(RecycleJournal.self, from: data),
-          journal.phase != "complete", journal.phase != "rolledBack"
-        else { return nil }
-        return RecycleRecord(journal: journal, directory: directory)
-      }
-    } else {
-      recycleRecords = []
-    }
-
-    guard let folder = session.cacheDirectory?.appendingPathComponent("commit-journals"),
-      let files = try? FileManager.default.contentsOfDirectory(
-        at: folder, includingPropertiesForKeys: nil)
-    else {
-      records = []
-      return
-    }
-    records = files.filter {
-      $0.pathExtension == "json" && !$0.lastPathComponent.contains("-metadata")
-    }.compactMap { url in
-      guard let data = try? Data(contentsOf: url),
-        let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-        let id = value["id"] as? String, let phase = value["phase"] as? String
-      else { return nil }
-      return OrganizationRecord(
-        id: id, source: value["source"] as? String ?? "",
-        destination: value["destination"] as? String ?? "", phase: phase, json: url)
-    }.sorted { $0.id > $1.id }
   }
   private func recoverLanguages(_ plan: OrganizationJournal) {
+    guard library.canManage, library.organizingChapterIds.isEmpty else {
+      recoveryFailed = true
+      status = "Another file operation is active. Wait for it to finish before resuming this plan."
+      return
+    }
     recovering = true
+    recoveryFailed = false
     status = ""
-    let owner = session.account?.ownerId
     Task {
       defer { recovering = false }
       do {
-        try await session.synchronize()
-        guard owner == session.account?.ownerId, owner == plan.libraryId,
-          let directory = session.cacheDirectory?.appendingPathComponent("organization-journals"),
-          let current = session.entities.first(where: { $0.id == plan.entityId && !$0.deleted })
-        else { throw LoginError.invalidToken }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .sortedKeys
-        let committed = try encoder.encode(current.input) == encoder.encode(plan.metadata)
-        guard committed || current.revision == plan.revision else {
-          throw LoginError.server("The chapter changed. Review its metadata before recovery.")
-        }
-        let root = try library.local.rootURL(plan.rootId)
-        guard root.standardizedFileURL.path == plan.root else { throw StorageError.unsafePath }
-        var leased: [URL] = []
-        defer { leased.forEach { $0.stopAccessingSecurityScopedResource() } }
-        for id in Set(plan.sourceRootIds + [plan.rootId]) {
-          let folder = try library.local.rootURL(id)
-          if folder.startAccessingSecurityScopedResource() { leased.append(folder) }
-        }
-        let staged =
-          committed
-          ? plan : try await FileTasks.perform { try FileOrganization.stage(plan, in: directory) }
-        guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
-        if !committed { try await session.update(current, input: plan.metadata) }
-        guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
-        try await FileTasks.perform { try FileOrganization.finish(staged, in: directory) }
-        library.fileQueue.finishRecoveredChapter(plan.entityId)
-        status = "Language folders organized."
+        try await library.resumeOrganizationPlan(plan)
+        status = "Files organized."
+        selectedPlan = nil
         load()
-      } catch { status = error.localizedDescription }
+      } catch {
+        recoveryFailed = true
+        status = error.localizedDescription
+      }
     }
   }
   private func recover(_ record: OrganizationRecord) {
@@ -384,7 +410,7 @@ struct FileQueuePanel: View {
     if !queue.items.isEmpty {
       VStack(alignment: .leading, spacing: 14) {
         Text("File Management Queue").font(.title2.bold())
-        ForEach(queue.items) { item in
+        ForEach(queue.items.sorted { $0.addedAt > $1.addedAt }) { item in
           HStack {
             Image(
               systemName: item.completed
@@ -399,7 +425,11 @@ struct FileQueuePanel: View {
             }
             Spacer()
             if item.status == "Running" { ProgressView().controlSize(.small) }
-            if item.failed { Button("Retry") { queue.retry(item.id) } }
+            if item.failed {
+              Button("Retry") { queue.retry(item.id) }
+              Button("Remove from Queue", systemImage: "xmark.circle") { queue.removeFailed(item.id) }
+                .help("Remove this failed queue entry. File recovery records remain in Commit History.")
+            }
           }
         }
       }.padding(20).background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
@@ -420,7 +450,7 @@ extension LibraryUIModel {
   func commitMediaLanguageChange(_ review: MediaLanguageReview) async throws -> LibraryEntity {
     guard canManage, let owner = session.account?.ownerId,
       let current = entity(review.chapter.id), current.revision == review.chapter.revision,
-      !fileQueue.manages(current.id)
+      !fileQueue.manages(current.id), !organizingChapterIds.contains(current.id)
     else {
       throw LoginError.server(
         "This chapter changed or has a pending import. Reopen it after that work finishes.")
@@ -563,5 +593,85 @@ struct MediaLanguageCommitScreen: View {
           .disabled(busy || recoveryRequired)
       }
     }.padding(28).frame(width: 620).interactiveDismissDisabled(busy)
+  }
+}
+
+extension LibraryUIModel {
+  func resumeOrganizationPlan(_ initial: OrganizationJournal) async throws {
+    var plan = initial
+    guard canManage, !organizingChapterIds.contains(plan.entityId), !fileQueue.manages(plan.entityId) else {
+      throw LoginError.server("This chapter has active file work. Retry after it finishes.")
+    }
+    organizingChapterIds.insert(plan.entityId)
+    defer { organizingChapterIds.remove(plan.entityId) }
+    let owner = session.account?.ownerId
+    try await session.synchronize()
+    guard owner == session.account?.ownerId, owner == plan.libraryId,
+      let directory = session.cacheDirectory?.appendingPathComponent("organization-journals"),
+      let current = session.entities.first(where: { $0.id == plan.entityId && !$0.deleted })
+    else { throw LoginError.invalidToken }
+    let journalId = plan.id
+    plan = try await FileTasks.perform { try FileOrganization.read(journalId, in: directory) }
+    guard owner == session.account?.ownerId, plan.libraryId == owner, plan.entityId == initial.entityId
+    else { throw LoginError.invalidToken }
+    if plan.phase == "complete" {
+      fileQueue.finishRecoveredChapter(plan.entityId)
+      try await translationQueue.recordRecoveredCommit(plan)
+      return
+    }
+    let root = try local.rootURL(plan.rootId)
+    guard root.standardizedFileURL.path == plan.root else { throw StorageError.unsafePath }
+    var leased: [URL] = []
+    var roots: [String: URL] = [:]
+    defer { leased.forEach { $0.stopAccessingSecurityScopedResource() } }
+    for id in Set(plan.sourceRootIds + [plan.rootId]) {
+      let folder = try local.rootURL(id)
+      roots[id] = folder
+      if folder.startAccessingSecurityScopedResource() { leased.append(folder) }
+    }
+    if plan.originalMetadata == nil,
+      case .conflict = try plan.recovery(current: current.input, revision: current.revision),
+      let context = translationQueue.legacyRecovery(for: plan) {
+      let legacy = plan
+      let referenceRoots = roots
+      if let recovered = try await FileTasks.perform({
+        guard let recovered = try legacy.recoveringLegacyImageAddition(current: current.input, mediaId: context.mediaId,
+          language: context.language, canonical: context.canonical, count: context.count,
+          cachedSource: context.cachedSource, roots: referenceRoots) else { return nil as OrganizationJournal? }
+        return try FileOrganization.recordRecovery(legacy, recovered: recovered, in: directory)
+      }) { plan = recovered }
+    }
+    guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
+    let update: MetadataInput?
+    switch try plan.recovery(current: current.input, revision: current.revision) {
+    case .committed: update = nil
+    case .update(let metadata): update = metadata
+    case .conflict:
+      if plan.originalMetadata == nil {
+        throw LoginError.server("This older file commit has no original metadata snapshot, and the chapter changed before recovery. Review File Management Queue before retrying. Cached translations are retained.")
+      }
+      throw LoginError.server("This chapter's files, page order or folder metadata changed since this commit was prepared. Review File Management Queue before retrying. Cached translations are retained.")
+    }
+    let committed = update == nil
+    if !committed {
+      for (path, bookmark) in plan.sourceBookmarks ?? [:] {
+        var stale = false
+        let file = try URL(resolvingBookmarkData: bookmark,
+          options: [.withSecurityScope, .withoutUI, .withoutMounting], relativeTo: nil,
+          bookmarkDataIsStale: &stale)
+        guard file.standardizedFileURL.path == path else { throw StorageError.unsafePath }
+        if file.startAccessingSecurityScopedResource() { leased.append(file) }
+      }
+    }
+    let resumable = plan
+    let staged =
+      committed
+      ? resumable : try await FileTasks.perform { try FileOrganization.stage(resumable, in: directory) }
+    guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
+    if let update { try await session.update(current, input: update) }
+    guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
+    try await FileTasks.perform { try FileOrganization.finish(staged, in: directory) }
+    fileQueue.finishRecoveredChapter(plan.entityId)
+    try await translationQueue.recordRecoveredCommit(staged)
   }
 }

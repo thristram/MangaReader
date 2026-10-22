@@ -27,8 +27,8 @@ Common comic/chapter tile: cover, title, optional author/progress line. Download
 | Comic Detail | Simple chapter collection, no complex hierarchy panel. Title/description translate button → preferred language immediately; tiles retain edit/download. |
 | Reader | Edge-to-edge canvas, Photos-like page transitions, pinch zoom/fullscreen/fit controls; Mac defaults to height fit, iPhone defaults/minimizes to whole-page fit. Circular icon controls: top-left Back + Thumbnail Sidebar; top-right Language + All Pages + Options, without text/chevrons; Full Screen at bottom-right. Centered page navigation/marks, immediate arrow-key navigation (right/down next; left/up previous). Optional description. |
 | PDF Reader | Same reading navigation, PDFKit pages; no invented page files; same progress/marks/language semantics. |
-| Video Reader | AVKit rendering; Mac play/pause/seek/time/mute shares the reader overlay visibility, with no separate native hover/focus bar; Space toggles playback. Chapter favorite/star/progress; explicit unsupported-codec state. |
-| Page Overview | All chapter thumbnails; select page; Preview-like drag order editing and separate file-renumber plan. |
+| Video Reader | AVKit rendering; play/pause/seek/time/mute shares the reader overlay visibility on both platforms, with no separate native hover/focus bar; Mac Space toggles playback. Chapter favorite/star/progress; explicit unsupported-codec state. |
+| Page Overview | All chapter thumbnails; select page. Mac Edit adds native click/range/rectangle multi-selection with blue circle checks and Select All, Deselect All, Set as Translation, Delete. Translation opens Alignment then Commit; Delete opens a Recycle commit review. Existing Page Order editing remains separate. |
 | Tags | Account-wide searchable tag list; create/edit/merge/name/color and NSFW designation. |
 | Tag Detail | Collection filtered by tag, respecting inherited tags and NSFW preference. |
 | History | Library-style collection with last-read/current page and edit/download; history clearing does not erase media. |
@@ -36,7 +36,7 @@ Common comic/chapter tile: cover, title, optional author/progress line. Download
 | Downloads | Library-style collection plus download state/progress/pause/retry/remove-local-copy; edit where Mac supports it. |
 | Storage Roots | Account roots, local/SMB binding and access status; never cloud-save raw credentials. |
 | Import & Identify | Empty state: drop/select surface fills the space below the title with matching 28-point padding. Review state: single vertical folder queue on the right, independently scrolling preview/metadata area and fixed bottom actions; narrow windows use two action rows. The drop box hides during review; dragging anywhere shows a full-area translucent drop overlay. All page thumbnails scroll horizontally; selecting one updates the large preview without changing page order or the metadata draft. Searchable author/comic/tags, chapter description and source IDs remain. Pixiv-prefixed names pre-fill the ID and remove the prefix from the title. Translation toggle above Chapter Name hides normal metadata fields; select the original chapter and edit only media language/description. Default Add to Library & Move Files. |
-| Pending Organization | Exact source→destination/file rename plan, conflicts/changed files, review and explicit Commit. Metadata already autosaved. |
+| Pending Organization | Source-only comics and standalone chapters appear as compact rows, with a shared Move to destination and per-row Move Files commit. Existing journal recovery, conflicts and rename reviews remain below. Metadata already autosaved. |
 | Conflict Review | No-overwrite choices, collision/external-change detail, safe destination alternatives; preview before commit. |
 | Commit Result | Per-operation success/failure/recovery status with retry only after journal reconciliation. |
 | Settings → Connections | Local/mounted SMB root bindings only; API/auth deployment configuration is in the project. |
@@ -45,6 +45,8 @@ Common comic/chapter tile: cover, title, optional author/progress line. Download
 | Settings → Sync | Verified account/device, sync state/conflicts/outbox/cache and sign-out. |
 
 ## Mac popups
+
+- **File references:** Edit Comic / Edit Chapter includes Referenced Folders, grouped by chapter/media version and distinct folder. Preview Options includes Info with selectable source/root-relative/on-device paths. iPhone Preview Options contains separate Info and Chapter Description actions. See [file-reference behavior](media-references-2026-10-16.md).
 
 - **Edit Chapter/Comic/Series:** title/description, original locale, existing localized text, immediate retranslate, searchable removable tag chips, links, cover and reading order as relevant. Save metadata automatically/explicitly without moving files; stage any necessary reorg separately.
 - **Change Media Language (Mac):** each media row in Edit Chapter → Chapter Content has a language dropdown. Selecting another language opens the commit sheet with old/new language and folder paths. Cancel keeps the original selection. Commit saves the current chapter draft and applies the reviewed folder change. Duplicate media languages and existing target folders are blocked. Single-version chapters show a language-only commit, retaining the existing language-free path.
@@ -70,7 +72,7 @@ The native bottom tabs are equally sized: Library, Reading, Offline, Saved, Auth
 | History | Chapter collection with resume; respects NSFW hiding. |
 | Statistics | Reading statistics view; no management entry points. |
 | Downloads | Third tab labeled Offline, chapter collections and local download actions, queued/progress/offline state. |
-| Reader / PDF / Video | Hide tab bar; canvas extends beneath system bars, with overlay controls outside the notch/Home indicator. Images/PDF fit the complete page at minimum zoom; pinch/double-tap enlarges images and permits pan. UIKit scroll-style page transitions track the finger; only a completed swipe changes page/progress. Top-right language menu and personal page marks. Tap toggles controls and system overlays. Video retains AVKit playback. |
+| Reader / PDF / Video | Hide tab bar; canvas extends beneath system bars, with overlay controls outside the notch/Home indicator. Images/PDF fit the complete page at minimum zoom; pinch/double-tap enlarges images and permits pan. UIKit scroll-style page transitions track the finger; only a completed swipe changes page/progress. Top-right language menu and personal page marks. Tap toggles controls and system overlays. Swipe down at minimum zoom exits Preview; short/cancelled drags spring back, while zoomed pages retain panning. Video uses AVKit rendering; playback, position/time and mute share the reading overlay and hide/restore with a canvas tap. |
 | Thumbnails | All-page collection navigates to selected page; no source-page reordering. |
 | Settings | Native inset grouped lists → storage/read/sync subpages; SMB Keychain bindings, preferred manga language, NSFW, cache/download controls and sign-out. No endpoint editor or Ollama administration. |
 | Sign-in | Full-screen SwiftUI welcome with app identity, Sign In and progress/error/retry. No nav bar/tab bar. Button opens hosted ASWeb login; verified identity reveals tabs, sign-out returns to welcome. |
@@ -82,3 +84,11 @@ System NavigationStack containers own push/pop and edge-back interactions. Reade
 ## Current native review
 
 The SwiftUI rewrite and page-by-page checks are recorded in [UI verification](ui-verification.md). This specification retains the full accepted product scope; the status document distinguishes remaining service/storage features from implemented screens.
+
+### Mac chapter content and All Pages additions
+
+Chapter Content places an icon-only trash action beside each version's language/page count. A commit review explains removal of the whole version, or the final version and empty chapter folder. All Pages and Page Order place **Add Images…** beside the heading; the native multi-select picker leads to a language/destination/file-list commit sheet. Empty chapters keep this entry available through Edit Chapter.
+
+### Manga image translation and organization submenus
+
+Settings → Manga Image Translation uses a native grouped form for base URL/Test Connection and shared default options. The bottom of Edit Chapter adds Translate Manga; its confirmation sheet checks connectivity, exposes the same options, chooses source/destination and disables enqueueing until connected. Pending Organization expands to Not Yet Organized, File Management Queue, Translation Queue and Commit History. File rows are newest first and failed rows include Retry/Remove from Queue. Translation rows group by chapter, with description, target language, page progress and errors; chapter buttons open a native thumbnail grid and zoomable generated-page preview.

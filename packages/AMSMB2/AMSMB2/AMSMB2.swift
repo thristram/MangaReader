@@ -13,6 +13,14 @@ import FoundationNetworking
 #endif
 import SMB2
 
+// Cancellation is shared by the stream consumer and its queued SMB producer.
+private final class SMBStreamCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stopped = false
+    func cancel() { lock.lock(); stopped = true; lock.unlock() }
+    var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return stopped }
+}
+
 /// Implements SMB2 File operations.
 #if canImport(Darwin)
 @objc(AMSMB2Manager)
@@ -991,23 +999,30 @@ public class SMB2Manager: NSObject, NSSecureCoding, Codable, NSCopying, CustomRe
     ) -> AsyncThrowingStream<Data, any Error> where R.Bound: FixedWidthInteger {
         let range = range?.int64Range ?? 0..<Int64.max
         let (result, continuation) = AsyncThrowingStream<Data, any Error>.makeStream(bufferingPolicy: .unbounded)
-        
+        let cancellation = SMBStreamCancellation()
+        continuation.onTermination = { _ in cancellation.cancel() }
         queue { [client] in
-            guard let client = client else { return }
+            guard let client else {
+                continuation.finish(throwing: POSIXError(.ENOTCONN))
+                return
+            }
             var offset = range.lowerBound
             do {
+                guard !cancellation.isCancelled else { throw CancellationError() }
                 let file = try SMB2FileHandle(forReadingAtPath: path, on: client)
                 try file.lseek(offset: range.lowerBound, whence: .set)
                 while offset < range.upperBound {
+                    guard !cancellation.isCancelled else { throw CancellationError() }
                     // Read optimal read size, or less if less is remaining.
                     let remainingLength = range.upperBound - offset
                     let optimizedReadSize = file.optimizedReadSize
+                    guard optimizedReadSize > 0 else { throw POSIXError(.ENOTCONN) }
                     let length = remainingLength < optimizedReadSize ? Int(remainingLength) : optimizedReadSize
                     let data = try file.read(length: length)
                     if data.isEmpty {
                         break
                     }
-                    continuation.yield(data.prefix(Int(range.upperBound - offset)))
+                    if case .terminated = continuation.yield(data.prefix(Int(range.upperBound - offset))) { return }
                     offset += Int64(data.count)
                 }
                 continuation.finish()
@@ -1672,7 +1687,9 @@ extension SMB2Manager {
             var sent: Int64 = 0
             try file.lseek(offset: range.lowerBound, whence: .set)
             while shouldContinue {
-                let prefCount = Int(min(Int64(file.optimizedReadSize), Int64(size - sent)))
+                let readSize = file.optimizedReadSize
+                guard readSize > 0 else { throw POSIXError(.ENOTCONN) }
+                let prefCount = Int(min(Int64(readSize), Int64(size - sent)))
                 guard prefCount > 0 else {
                     break
                 }

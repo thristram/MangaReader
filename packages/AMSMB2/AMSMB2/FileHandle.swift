@@ -184,12 +184,13 @@ final class SMB2FileHandle: @unchecked Sendable {
     }
 
     var maxReadSize: Int {
-        (try? Int(client.withThreadSafeContext(smb2_get_max_read_size))) ?? -1
+        (try? Int(client.withThreadSafeContext(smb2_get_max_read_size))) ?? 0
     }
 
     /// This value allows softer streaming
+    static let maximumReadChunkSize = 1024 * 1024
     var optimizedReadSize: Int {
-        maxReadSize
+        min(maxReadSize, Self.maximumReadChunkSize)
     }
 
     @discardableResult
@@ -200,41 +201,48 @@ final class SMB2FileHandle: @unchecked Sendable {
         return result
     }
 
-    func read(length: Int = 0) throws -> Data {
-        precondition(
-            length <= UInt32.max, "Length bigger than UInt32.max can't be handled by libsmb2."
-        )
+    private func readCount(_ length: Int, context: UnsafeMutablePointer<smb2_context>) throws -> Int {
+        guard length >= 0, length <= UInt32.max else { throw POSIXError(.EINVAL) }
+        let maximum = Int(smb2_get_max_read_size(context))
+        guard smb2_get_fd(context) >= 0, maximum > 0 else { throw POSIXError(.ENOTCONN) }
+        return min(length == 0 ? maximum : length, maximum, Self.maximumReadChunkSize)
+    }
 
-        let handle = try handle.unwrap()
-        let count = length > 0 ? length : optimizedReadSize
-        var buffer = Data(repeating: 0, count: count)
-        let result = try buffer.withUnsafeMutableBytes { buffer in
-            try client.async_await { context, cbPtr -> Int32 in
-                smb2_read_async(
-                    context, handle, buffer.baseAddress, .init(buffer.count), SMB2Client.generic_handler, cbPtr
-                )
+    func read(length: Int = 0) throws -> Data {
+        guard length >= 0, length <= UInt32.max else { throw POSIXError(.EINVAL) }
+        // Keep context validation, negotiated size, allocation and request under
+        // the same recursive lock. Disconnect must not invalidate the size or
+        // C-owned handle between these steps.
+        return try client.withThreadSafeContext { context in
+            let count = try readCount(length, context: context)
+            let handle = try handle.unwrap()
+            var buffer = Data(repeating: 0, count: count)
+            let result = try buffer.withUnsafeMutableBytes { buffer in
+                try client.async_await { context, cbPtr -> Int32 in
+                    smb2_read_async(context, handle, buffer.baseAddress, .init(buffer.count),
+                                    SMB2Client.generic_handler, cbPtr)
+                }
             }
+            guard result >= 0, result <= count else { throw POSIXError(.EIO) }
+            return Data(buffer.prefix(Int(result)))
         }
-        return Data(buffer.prefix(Int(result)))
     }
 
     func pread(offset: UInt64, length: Int = 0) throws -> Data {
-        precondition(
-            length <= UInt32.max, "Length bigger than UInt32.max can't be handled by libsmb2."
-        )
-
-        let handle = try handle.unwrap()
-        let count = length > 0 ? length : optimizedReadSize
-        var buffer = Data(repeating: 0, count: count)
-        let result = try buffer.withUnsafeMutableBytes { buffer in
-            try client.async_await { context, cbPtr -> Int32 in
-                smb2_pread_async(
-                    context, handle, buffer.baseAddress, .init(buffer.count), offset, SMB2Client.generic_handler,
-                    cbPtr
-                )
+        guard length >= 0, length <= UInt32.max else { throw POSIXError(.EINVAL) }
+        return try client.withThreadSafeContext { context in
+            let count = try readCount(length, context: context)
+            let handle = try handle.unwrap()
+            var buffer = Data(repeating: 0, count: count)
+            let result = try buffer.withUnsafeMutableBytes { buffer in
+                try client.async_await { context, cbPtr -> Int32 in
+                    smb2_pread_async(context, handle, buffer.baseAddress, .init(buffer.count), offset,
+                                     SMB2Client.generic_handler, cbPtr)
+                }
             }
+            guard result >= 0, result <= count else { throw POSIXError(.EIO) }
+            return Data(buffer.prefix(Int(result)))
         }
-        return buffer.prefix(Int(result))
     }
 
     var maxWriteSize: Int {

@@ -83,6 +83,12 @@ struct LibrarySettingsScreen: View {
           LabeledContent("Default image display", value: "Fill window height")
         }
         Section("Content") { Toggle("Show NSFW content", isOn: $showNSFW) }
+      case .imageTranslation:
+        #if os(macOS)
+          Text("Configure Manga Image Translation from its settings page.")
+        #else
+          Text("Image translation is managed on your Mac.")
+        #endif
       case .translation:
         Section("Local Ollama") {
           TextField("Service URL", text: $host).fullFieldFocus()
@@ -281,7 +287,8 @@ struct LibrarySettingsScreen: View {
 }
 let contentLanguages = [
   (code: "zh", name: "中文"), (code: "en", name: "English"), (code: "ja", name: "日本語"),
-  (code: "ko", name: "한국어"), (code: "und", name: "Unspecified"),
+  (code: "ko", name: "한국어"), (code: "es", name: "Español"), (code: "fr", name: "Français"),
+  (code: "und", name: "Unspecified"),
 ]
 let mediaLanguages = contentLanguages + [(code: "zxx", name: "No text")]
 let finderColors = [

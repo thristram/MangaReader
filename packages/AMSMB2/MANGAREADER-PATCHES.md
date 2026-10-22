@@ -44,3 +44,37 @@ and deinit, avoiding the C synchronous close waiter's timeout lifetime. These fi
 the captured iPhone `free_smb2fh/close_cb` crash during client destruction. Run
 `python3 scripts/verify-smb-handle-lifecycle.py` after a Debug Mac build as well as
 the transport diagnostics. It uses only socketpairs and synthetic handles.
+
+`AMSMB2/Context.swift`, both asynchronous wait wrappers and `generic_handler`:
+C callback state now uses an explicitly retained heap object, released after a
+reply completes or after failed-wait context draining. Previously C received a
+`withUnsafeMutablePointer(to: &cb)` address after that scheduling closure had
+returned, outside Swift's guaranteed pointer lifetime. This was unsafe under
+rapid cancelled cover requests even though the enclosing function was waiting.
+The callback state no longer depends on Swift stack storage. Transport diagnostics
+and pending-CLOSE timeout checks exercise success, failure and teardown paths.
+This removes a concrete lifetime hazard; it does not establish that every
+reported device crash had this cause without its corresponding crash log.
+
+`Dependencies/libsmb2/lib/socket.c`, `smb2_write_to_socket`: configure
+`SO_NOSIGPIPE` on Darwin SMB sockets before writing. A closed NAS peer could
+otherwise deliver process-fatal SIGPIPE from `writev`, bypassing Swift error
+handling entirely. The synthetic closed-peer close request reproduced SIGPIPE
+before this patch. The regression retains the default signal disposition and
+requires an ordinary socket error with safe callback cleanup. This is a per-socket
+option, with no process-wide signal changes or changes to SMB security settings.
+
+## Device-confirmed negative read buffer (2026-10-16)
+
+Authorized device reports show `Data.init(repeating:count:)` trapping with count
+`-1`, called by `SMB2FileHandle.read(length:)` inside the async contents producer.
+The negotiated-size getter returned `-1` when a cancelled/closed client no longer
+had a context. `read` and `pread` now validate connection, size and handle under
+one recursive context lock before allocating, throw for invalid lengths and
+bound each buffer to 1 MiB. Missing negotiated size is represented by zero, and
+manager read loops throw instead of reporting a truncated successful transfer.
+Async contents producers observe stream termination, stop before further reads
+and finish disconnected-client streams with an error. App marker validation
+uses the bounded async Data operation, waiting for its producer before teardown.
+The lifecycle test now reproduces twenty read-after-disconnect sequences with
+default, positive, negative and out-of-range lengths for both read variants.

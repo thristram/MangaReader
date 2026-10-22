@@ -32,6 +32,7 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
   }
   private var cachedStates: [StateKey: PersonalState]?
   private let snapshotWriter = SnapshotWriter()
+  private var cacheWriteSequence: UInt64 = 0
   var catalog: LibraryCatalog {
     if let cachedCatalog { return cachedCatalog }
     let result = LibraryCatalog(entities)
@@ -340,19 +341,47 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
   }
   func synchronize() async throws {
     guard let owner = account?.ownerId else { return }
+    let generation = epoch
+    let initialEntities = Set(entities.map(\.id))
+    let initialStates = Set(states.map(\.id))
     let snapshot = try await api.snapshot()
     guard snapshot.schemaVersion == 1 else {
       throw LoginError.server("Unsupported metadata schema. Update the app before syncing.")
     }
-    guard account?.ownerId == owner else { return }
-    entities = snapshot.entities
-    states = snapshot.states
+    guard account?.ownerId == owner, generation == epoch else { return }
+    // A snapshot started before a page commit may arrive after that commit's
+    // response. Reconcile by revision rather than rolling the library back.
+    var merged = snapshot
+    merged.entities = Self.mergeSnapshot(snapshot.entities, current: entities, initialIDs: initialEntities,
+      id: { $0.id }, revision: { $0.revision })
+    merged.states = Self.mergeSnapshot(snapshot.states, current: states, initialIDs: initialStates,
+      id: { $0.id }, revision: { $0.revision })
+    entities = merged.entities
+    states = merged.states
     if let dir = cacheDirectory {
-      try await snapshotWriter.save(snapshot, to: dir)
-      guard account?.ownerId == owner else { return }
+      cacheWriteSequence &+= 1
+      try await snapshotWriter.save(merged, to: dir, sequence: cacheWriteSequence)
+      guard account?.ownerId == owner, generation == epoch else { return }
     }
     status = "Library synced"
     onChange?()
+  }
+  private static func mergeSnapshot<Item>(_ incoming: [Item], current: [Item], initialIDs: Set<String>,
+    id: (Item) -> String, revision: (Item) -> Int) -> [Item] {
+    let local = Dictionary(current.map { (id($0), $0) }, uniquingKeysWith: { first, second in
+      revision(first) >= revision(second) ? first : second
+    })
+    // Deletes completed while this request was in flight must not be resurrected.
+    let removed = initialIDs.subtracting(local.keys)
+    var seen = Set<String>()
+    var result = incoming.compactMap { remote -> Item? in
+      let key = id(remote)
+      guard !removed.contains(key), seen.insert(key).inserted else { return nil }
+      if let value = local[key], revision(value) > revision(remote) { return value }
+      return remote
+    }
+    result += current.filter { !seen.contains(id($0)) && !removed.contains(id($0)) }
+    return result
   }
   private func loadCache() {
     guard let dir = cacheDirectory,
@@ -400,7 +429,9 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
     let owner = account?.ownerId
     let entity = try await api.create(input)
     guard account?.ownerId == owner else { throw LoginError.invalidToken }
-    entities.append(entity)
+    if let i = entities.firstIndex(where: { $0.id == entity.id }) {
+      if entity.revision >= entities[i].revision { entities[i] = entity }
+    } else { entities.append(entity) }
     onChange?()
     return entity
   }
@@ -408,7 +439,9 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
     let owner = account?.ownerId
     let updated = try await api.update(entity, input: input)
     guard account?.ownerId == owner else { throw LoginError.invalidToken }
-    if let i = entities.firstIndex(where: { $0.id == entity.id }) { entities[i] = updated }
+    if let i = entities.firstIndex(where: { $0.id == entity.id }), updated.revision >= entities[i].revision {
+      entities[i] = updated
+    }
     onChange?()
   }
   func delete(_ entity: LibraryEntity) async throws {
@@ -503,17 +536,21 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
     let old = states.first { $0.entityId == input.entityId && $0.pageIndex == input.pageIndex }
     let value = try await api.state(input, revision: old?.revision ?? 0)
     guard account?.ownerId == owner else { throw LoginError.invalidToken }
-    states.removeAll { $0.id == value.id }
-    states.append(value)
+    if let i = states.firstIndex(where: { $0.id == value.id }) {
+      if value.revision >= states[i].revision { states[i] = value }
+    } else { states.append(value) }
     onChange?()
   }
 }
 
 // Serial file writes and JSON encoding stay off the UI actor.
 private actor SnapshotWriter {
-  func save(_ snapshot: SyncSnapshot, to directory: URL) throws {
+  private var sequences: [String: UInt64] = [:]
+  func save(_ snapshot: SyncSnapshot, to directory: URL, sequence: UInt64) throws {
+    guard sequence >= (sequences[directory.path] ?? 0) else { return }
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     try JSONEncoder().encode(snapshot).write(
       to: directory.appendingPathComponent("snapshot.json"), options: .atomic)
+    sequences[directory.path] = sequence
   }
 }

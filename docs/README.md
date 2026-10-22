@@ -18,3 +18,5 @@ Baseline: 2026-10-13. These documents preserve the latest decisions from the des
 Change requirements/spec and implementation status together when behavior changes. Record an ADR when a durable architecture decision changes. The mock is a visual reference and may contain screens that are not implemented yet.
 
 - [SwiftUI native UI review and screenshots](apple/ui-verification.md)
+
+- [Mac manga image translation, defaults and queue recovery](apple/manga-image-translation-2026-10-18.md)

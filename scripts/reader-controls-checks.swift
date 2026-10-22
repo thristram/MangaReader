@@ -79,9 +79,19 @@ import SwiftUI
     try await makeVideo(video)
     let playback = ReaderVideoPlayback()
     await playback.load(video)
+    for _ in 0..<100 {
+      if playback.ready && !playback.seeking { break }
+      try await Task.sleep(for: .milliseconds(20))
+    }
     expect(playback.ready && !playback.unsupported && playback.duration >= 2.9,
            "real MP4 loads into the reader's shared player")
-    let canvas = ReaderVideoCanvas(player: playback.player)
+    playback.toggle()
+    try await Task.sleep(for: .milliseconds(150))
+    expect(playback.playRequested && !playback.playing && playback.player.rate == 0
+      && playback.player.currentTime().seconds < 0.05,
+      "item readiness advances playback before a native video output shows its first frame")
+    playback.toggle()
+    let canvas = ReaderVideoCanvas(player: playback.player, onDisplay: { playback.displayed($0, ready: $1) })
     // Exercise the actual native view through a hosting controller.
     let host = NSHostingController(rootView: canvas)
     let videoWindow = NSWindow(contentViewController: host)
@@ -92,11 +102,25 @@ import SwiftUI
       if let view = view as? AVPlayerView { return view }
       return view.subviews.lazy.compactMap(nativePlayer).first
     }
+    for _ in 0..<150 {
+      if playback.displayReady { break }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    expect(playback.displayReady && nativePlayer(host.view)?.isReadyForDisplay == true,
+           "paused local MP4 does not display its initial frame")
     expect(nativePlayer(host.view)?.controlsStyle == AVPlayerViewControlsStyle.none,
            "AVKit renders media without a competing focus/hover control bar")
     playback.toggle()
+    for _ in 0..<100 {
+      if playback.playing { break }
+      try await Task.sleep(for: .milliseconds(20))
+    }
     expect(playback.playing && playback.player.rate > 0, "overlay play works without video focus")
     playback.toggle()
+    for _ in 0..<100 {
+      if !playback.playing { break }
+      try await Task.sleep(for: .milliseconds(20))
+    }
     expect(!playback.playing && playback.player.rate == 0, "overlay pause works")
     playback.seek(1.5)
     expect(abs(playback.elapsed - 1.5) < 0.01, "shared seek position updates")
@@ -112,6 +136,10 @@ import SwiftUI
     await playback.load(invalid)
     expect(!playback.ready && playback.unsupported, "unsupported media keeps explicit fallback")
     await playback.load(video)
+    for _ in 0..<100 {
+      if playback.ready { break }
+      try await Task.sleep(for: .milliseconds(20))
+    }
     expect(playback.ready && !playback.unsupported, "valid media clears previous codec error")
     videoWindow.close()
     playback.reset()

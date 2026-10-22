@@ -12,6 +12,7 @@ import MangaCore
   private var activeRoots: [String: RootAccess] = [:]
   private var readingRoots: [String: (id: UUID, task: Task<URL, Error>)] = [:]
   private var readingEpoch = UUID()
+  private var sourceReferences: (owner: String, generation: UInt64, index: SourceReferenceIndex)?
   init(session: AppSession) { self.session = session }
   private var bindingsURL: URL? {
     session.cacheDirectory?.appendingPathComponent("storage-bindings.json")
@@ -169,24 +170,53 @@ import MangaCore
     return roots
   }
   func sourceIsShared(_ candidates: [URL], excluding mediaId: String) async throws -> Bool {
-    let owner = session.account?.ownerId
-    let media = session.entities.filter { !$0.deleted }.flatMap(\.media).filter { $0.id != mediaId }
-    let roots = try await referenceRoots(for: media)
-    let shared = try await FileTasks.perform {
-      let sources = Set(candidates.map { $0.resolvingSymlinksInPath().path })
-      for version in media {
-        try Task.checkCancellation()
-        guard let root = roots[version.storageRootId] else { continue }
-        for relative in version.relativePaths {
-          if let url = try? PathPolicy.resolve(relative, under: root), sources.contains(url.path) {
-            return true
-          }
+    guard let owner = session.account?.ownerId else { throw LoginError.invalidToken }
+    let sources = try await FileTasks.perform {
+      try Task.checkCancellation()
+      return Set(candidates.map { $0.resolvingSymlinksInPath().standardizedFileURL.path })
+    }
+    // A sync/edit can arrive while awaiting a NAS. Never authorize a destructive move
+    // using an obsolete negative answer; retry, or conservatively retain originals.
+    for _ in 0..<3 {
+      try Task.checkCancellation()
+      guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
+      let generation = session.metadataGeneration
+      let epoch = readingEpoch
+      let index: SourceReferenceIndex
+      if let cached = sourceReferences, cached.owner == owner, cached.generation == generation {
+        index = cached.index
+      } else {
+        let entities = session.entities
+        index = try await FileTasks.perform {
+          try Task.checkCancellation()
+          return SourceReferenceIndex(media: entities.filter { !$0.deleted }.flatMap(\.media))
+        }
+        guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
+        if generation == session.metadataGeneration, epoch == readingEpoch {
+          sourceReferences = (owner, generation, index)
         }
       }
-      return false
+      // Try already-open roots first. A positive match avoids touching other bookmarks.
+      let ids = index.rootIDs(excluding: mediaId).sorted {
+        let left = activeRoots[$0] != nil, right = activeRoots[$1] != nil
+        return left == right ? $0 < $1 : left
+      }
+      for id in ids {
+        try Task.checkCancellation()
+        guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
+        // As before, references not connected on this device cannot be resolved here.
+        guard let root = try? await readingRootURL(id) else { continue }
+        let shared = try await FileTasks.perform {
+          try index.containsAny(of: sources, under: root, rootID: id, excluding: mediaId)
+        }
+        guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
+        if shared { return true }
+      }
+      try Task.checkCancellation()
+      guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
+      if generation == session.metadataGeneration, epoch == readingEpoch { return false }
     }
-    guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
-    return shared
+    return true
   }
   func urls(for media: MediaVersion) throws -> [URL] {
     let root = try rootURL(media.storageRootId)
@@ -259,6 +289,7 @@ import MangaCore
   }
   func release() {
     invalidateReadingRoots()
+    sourceReferences = nil
     for access in activeRoots.values { access.stop() }
     activeRoots = [:]
   }

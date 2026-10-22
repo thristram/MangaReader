@@ -164,6 +164,7 @@ final class PhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
       let directory = result.deletingLastPathComponent().appendingPathComponent("fixtures")
       let session = NativeUIFixtures.makeSession(cacheRoot: directory.appendingPathComponent("cache"))
       let model = try NativeUIFixtures.seed(session: session, directory: directory)
+      try await NativeUIFixtures.storageReferenceChecks(model)
       try await CollectionLoadingChecks.run(directory: directory, session: session, library: model)
       try savedCollectionChecks(session, model)
       let chapter = session.entities.first { $0.id == "c0-0" }!
@@ -250,7 +251,9 @@ final class PhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
       wideViewport.scroll.setZoomScale(1, animated: false)
       live.onPageSettled?(0)
       try await wait("Return to first page") { live.visibleIndex == 0 && !live.transitioning }
-      let report = "PASS: five equal-width native tabs in order; Saved Pages/Starred membership separation; saved page search, inherited tags, unread and inherited NSFW filters. Wide/long/portrait image fit; pinch layout stability; resized fit; PDF fit and zoom; cancelled/completed paging; RTL/bounds; bounded controllers; consecutive bound page jumps; neighbour viewport/zoom reuse; production full-screen viewport and image reach screen top. 2,000-chapter index and bounded background cover loading/cancellation. Synthetic offline data only.\n"
+      try await PhonePagingStressChecks.run(window: window, session: session, library: model)
+      try await PhoneVideoChecks.run(window: window, session: session, library: model, directory: directory)
+      let report = "PASS: ownership-safe rapid paging and cancelled-page recovery; 700-tile/100-reversal collection stress and memory warnings; downward dismiss/cancel/zoom isolation; coalesced backward video scrubbing. Shared iOS video play/pause/seek/mute without canvas focus; no native playback bar; full-screen video; unsupported codec recovery; actual completion and release/reopen. Five equal-width native tabs in order; Saved Pages/Starred membership separation; saved page search, inherited tags, unread and inherited NSFW filters. Wide/long/portrait image fit; pinch layout stability; resized fit; PDF fit and zoom; cancelled/completed paging; RTL/bounds; bounded controllers; consecutive bound page jumps; neighbour viewport/zoom reuse; production full-screen viewport and image reach screen top. 2,000-chapter index and bounded background cover loading/cancellation. Synthetic offline data only.\n"
       try report.write(to: result, atomically: true, encoding: .utf8)
       NSLog("%@", report)
     } catch {
