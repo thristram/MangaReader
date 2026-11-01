@@ -34,6 +34,26 @@ import SwiftUI
     let app = NSApplication.shared
     app.setActivationPolicy(.prohibited)
     app.finishLaunching()
+    if ProcessInfo.processInfo.environment["MANGA_SYNC_CHECKS_ONLY"] == "1" {
+      try await SyncTrafficChecks.run(directory: directory.appendingPathComponent("sync"))
+      return
+    }
+    try await SyncTrafficChecks.run(directory: directory.appendingPathComponent("sync"))
+    if ProcessInfo.processInfo.environment["MANGA_IMPORT_PAGES_CHECKS_ONLY"] == "1" {
+      try await PageBatchChecks.run(directory: directory.appendingPathComponent("page-batch"))
+      try await ImportResponsivenessChecks.run(directory: directory.appendingPathComponent("import-response"))
+      return
+    }
+    if ProcessInfo.processInfo.environment["MANGA_COLLECTION_CHECKS_ONLY"] == "1" {
+      let session = NativeUIFixtures.makeSession(cacheRoot: directory.appendingPathComponent("cache"))
+      let library = try NativeUIFixtures.seed(session: session, directory: directory)
+      try NativeUIFixtures.collectionSortingChecks(library)
+      return
+    }
+    if ProcessInfo.processInfo.environment["MANGA_OLLAMA_CHECKS_ONLY"] == "1" {
+      try await OllamaTranslationChecks.run()
+      return
+    }
     if ProcessInfo.processInfo.environment["MANGA_READER_CONTROLS_ONLY"] == "1" {
       try await ReaderControlsChecks.run(directory: directory.appendingPathComponent("reader-controls"))
       return
@@ -486,17 +506,15 @@ import SwiftUI
         && FileManager.default.fileExists(atPath: correctedFolder.path)
         && FileManager.default.fileExists(atPath: pendingFolder.path),
       "metadata failure keeps original readable and new folder available for recovery")
-    let commitDirectory = session.cacheDirectory!.appendingPathComponent("commit-journals")
+    let commitDirectory = session.cacheDirectory!.appendingPathComponent("organization-journals")
     let pendingMove = try FileManager.default.contentsOfDirectory(
       at: commitDirectory, includingPropertiesForKeys: nil
-    ).compactMap { url -> MoveJournal? in
-      guard url.pathExtension == "json", !url.lastPathComponent.hasSuffix("-metadata.json") else {
-        return nil
-      }
-      return try? JSONDecoder().decode(MoveJournal.self, from: Data(contentsOf: url))
-    }.first { $0.destination == pendingFolder.path && $0.phase == "filesMoved_metadataPending" }!
-    try await session.update(translated, input: failedCorrection.metadata)
-    try FileCommit.finish(pendingMove, in: commitDirectory)
+    ).compactMap { url -> OrganizationJournal? in
+      guard url.pathExtension == "json" else { return nil }
+      return try? JSONDecoder().decode(OrganizationJournal.self, from: Data(contentsOf: url))
+    }.first { $0.entityId == translated.id && $0.phase == "filesReady_metadataPending"
+      && $0.metadata.media.contains { $0.id == translationId && $0.language == "ko" } }!
+    try await library.resumeOrganizationPlan(pendingMove)
     translated = library.entity(translated.id)!
     expect(
       translated.media[1].language == "ko"
@@ -769,6 +787,7 @@ import SwiftUI
     try await SingleFileImportChecks.run(directory: directory.appendingPathComponent("single-file-import"))
     try await PageBatchChecks.run(directory: directory.appendingPathComponent("page-batch"))
     try await ImageTranslationChecks.run(directory: directory.appendingPathComponent("image-translation"))
+    try await OllamaTranslationChecks.run()
     print(
       "PASS: asynchronous single-file cover despite missing unrelated page; per-page cache and reuse without original source; reader opens without whole-chapter file scan; background import survives UI closure and snapshots metadata; translation relocates both languages before source cleanup; nested image/PDF batch moves share selected parent bookmark; add-only nested paths reopen after source release; single chapter deletion preserves siblings and parent; real cross-volume import/API commit/recycle when test volume is provided; unarchived comic deletion preserving originals; archived comic recycling; shared-file protection; API failure restores files; tag rename/delete without deleting comics; destination removal without losing media; download queue/progress/failure/retry; native pager first layout/resize; SwiftUI account gating/reset; NSFW, history, collections, author search and tag filters; build endpoint policy; retryable sign-in error. No server calls."
     )

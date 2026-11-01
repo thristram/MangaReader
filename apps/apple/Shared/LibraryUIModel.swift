@@ -9,6 +9,10 @@ enum LibraryPage: String, CaseIterable, Identifiable, Hashable {
   case settings, reading, translation, imageTranslation, connections, sync, files
   case unorganized, fileManagement, translationQueue, commitHistory
   var id: String { rawValue }
+  var hasCollectionFilters: Bool {
+    [.search, .library, .continuing, .favorites, .starred, .savedPages,
+     .authors, .series, .history, .downloads].contains(self)
+  }
   var title: String {
     switch self {
     case .search: "Search"
@@ -85,9 +89,10 @@ enum LibraryPage: String, CaseIterable, Identifiable, Hashable {
 enum LibraryRoute: Hashable {
   case page(LibraryPage)
   case entity(String)
+  case pages(String)
 }
 enum LibrarySort: String, CaseIterable {
-  case updated = "Recently Updated"
+  case updated = "Update Time"
   case title = "Title"
   case author = "Author"
   case read = "Last Read"
@@ -135,12 +140,18 @@ struct DownloadActivity: Identifiable {
   private let coverPermits = AsyncPermitPool(limit: 2)
   private var availabilityUpdate: Task<Void, Never>?
   #if os(macOS)
+    lazy var pendingJournalIndex = PendingFileJournalIndex()
     lazy var fileQueue = ImportFileQueue(library: self)
     lazy var translationQueue = MangaTranslationQueue(library: self)
     @Published var organizingChapterIds = Set<String>()
   #endif
   @Published var query = ""
-  @Published var sort: LibrarySort = .updated
+  @Published var sort: LibrarySort = .updated {
+    didSet {
+      if sort != oldValue { sortAscending = sort == .title || sort == .author }
+    }
+  }
+  @Published var sortAscending = false
   @Published var unreadOnly = false
   @Published var selectedTag: String?
   @Published var editor: EditorRequest?
@@ -158,6 +169,14 @@ struct DownloadActivity: Identifiable {
   private var downloadQueue: [String] = []
   private var activeDownload: String?
   private var stateTask: Task<Void, Never>?
+  private var stateDelayTask: Task<Void, Never>?
+  private var nextStateAttempt = Date.distantPast
+  private var urgentStateKeys = Set<String>()
+  private var progressOnlyKeys = Set<String>()
+  private var pendingStateFields: [String: Set<String>] = [:]
+  private var desiredStateFields: [String: Set<String>] = [:]
+  private let stateOutbox = ReadingStateOutbox()
+  private var outboxSequence: UInt64 = 0
   private var pendingStates: [String: StateInput] = [:]
   @Published private var desiredStates: [String: StateInput] = [:]
   private var stateEpoch = UUID()
@@ -165,6 +184,8 @@ struct DownloadActivity: Identifiable {
     self.session = session
     local = LocalMedia(session: session)
     smb = SMBMedia(session: session)
+    session.flushReadingState = { [weak self] in self?.flushStates() }
+    session.persistReadingState = { [weak self] in await self?.persistStatesNow() }
     smb.availabilityChanged = { [weak self] in
       guard let self, self.availabilityUpdate == nil else { return }
       self.availabilityUpdate = Task { [weak self] in
@@ -207,6 +228,9 @@ struct DownloadActivity: Identifiable {
     stateEpoch = UUID()
     stateTask?.cancel()
     stateTask = nil
+    stateDelayTask?.cancel(); stateDelayTask = nil
+    urgentStateKeys = []; progressOnlyKeys = []; nextStateAttempt = .distantPast
+    pendingStateFields = [:]; desiredStateFields = [:]
     pendingStates = [:]
     desiredStates = [:]
     reader = nil
@@ -250,6 +274,14 @@ struct DownloadActivity: Identifiable {
   }
   func title(_ entity: LibraryEntity) -> String {
     entity.kind == .author ? entity.title : entity.title(in: AppConfiguration.preferredLanguage)
+  }
+  func author(for item: LibraryEntity) -> LibraryEntity? {
+    guard let current = entity(item.id) else { return nil }
+    if current.kind == .author { return entity(current.id) }
+    let work = entity(current.workId)
+    let series = entity(current.seriesId ?? work?.seriesId)
+    return [current.authorId, work?.authorId, series?.authorId]
+      .compactMap { entity($0) }.first { $0.kind == .author }
   }
   func chapters(_ entity: LibraryEntity) -> [LibraryEntity] { smb.chapters(for: entity) }
   func children(_ parent: LibraryEntity) -> [LibraryEntity] {
@@ -337,7 +369,9 @@ struct DownloadActivity: Identifiable {
       ($0.element.id, $0.offset)
     })
     return bookmarks.filter { ranks[$0.entityId] != nil }.sorted {
-      if sort == .updated && $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+      if sort == .updated && $0.updatedAt != $1.updatedAt {
+        return sortAscending ? $0.updatedAt < $1.updatedAt : $0.updatedAt > $1.updatedAt
+      }
       let a = ranks[$0.entityId]!, b = ranks[$1.entityId]!
       if a != b { return a < b }
       return ($0.pageIndex ?? 0) < ($1.pageIndex ?? 0)
@@ -351,19 +385,28 @@ struct DownloadActivity: Identifiable {
           || [title(e), e.description, entity(e.authorId).map(title) ?? ""].joined(separator: " ")
             .localizedCaseInsensitiveContains(query))
     }
-    return rows.sorted {
+    // Resolve display values once per row, rather than during every comparison.
+    let titles = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, title($0)) })
+    let authors = sort == .author
+      ? Dictionary(uniqueKeysWithValues: rows.map { ($0.id, author(for: $0).map(title) ?? "other author") })
+      : [:]
+    return rows.sorted { a, b in
+      var order: ComparisonResult
       if lastRead || sort == .read {
-        return (state($0.id)?.updatedAt ?? "") > (state($1.id)?.updatedAt ?? "")
+        order = (state(a.id)?.updatedAt ?? "").compare(state(b.id)?.updatedAt ?? "")
+      } else {
+        switch sort {
+        case .updated: order = a.updatedAt.compare(b.updatedAt)
+        case .title: order = titles[a.id]!.localizedStandardCompare(titles[b.id]!)
+        case .author: order = authors[a.id]!.localizedStandardCompare(authors[b.id]!)
+        case .read: order = .orderedSame
+        }
       }
-      if sort == .title {
-        return title($0).localizedStandardCompare(title($1)) == .orderedAscending
+      if order == .orderedSame {
+        order = titles[a.id]!.localizedStandardCompare(titles[b.id]!)
       }
-      if sort == .author {
-        let a = entity($0.authorId).map(title) ?? "other author"
-        let b = entity($1.authorId).map(title) ?? "other author"
-        if a != b { return a.localizedStandardCompare(b) == .orderedAscending }
-      }
-      return $0.updatedAt > $1.updatedAt
+      if order == .orderedSame { order = a.id.compare(b.id) }
+      return order == ((lastRead || !sortAscending) ? .orderedDescending : .orderedAscending)
     }
   }
   // Diagnostic full-chapter check; visible views use mediaURL/coverURL instead.
@@ -469,7 +512,7 @@ struct DownloadActivity: Identifiable {
     guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
     return url
   }
-  func open(_ chapter: LibraryEntity, page: Int? = nil) {
+  func open(_ chapter: LibraryEntity, page: Int? = nil, mediaId: String? = nil) {
     guard !opening else { return }
     opening = true
     let owner = session.account?.ownerId
@@ -477,7 +520,8 @@ struct DownloadActivity: Identifiable {
       defer { opening = false }
       do {
         guard let current = entity(chapter.id),
-          let version = current.preferredMedia(AppConfiguration.preferredLanguage),
+          let version = current.media.first(where: { $0.id == mediaId })
+            ?? current.preferredMedia(AppConfiguration.preferredLanguage),
           version.pageCount > 0
         else { throw StorageError.emptyChapter }
         // File reads happen in the visible page's task, never before opening the reader.
@@ -655,13 +699,13 @@ struct DownloadActivity: Identifiable {
     }
 
     // Preflight every chapter before changing metadata or moving any files.
-    _ = try records.map { try local.archiveFiles(for: $0, deleting: ids) }
+    for record in records { _ = try await local.archiveFiles(for: record, deleting: ids) }
     guard let journals = session.cacheDirectory?.appendingPathComponent("delete-journals") else {
       throw LoginError.invalidToken
     }
     for record in records {
       try Task.checkCancellation()
-      let files = try local.archiveFiles(for: record, deleting: [record.id])
+      let files = try await local.archiveFiles(for: record, deleting: [record.id])
       let cleanupRoots = try await local.referenceRoots(for: record.media)
       let cleanup = EmptyMediaFolder.plan(media: record.media, roots: cleanupRoots, chapterTitle: record.title)
       guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
@@ -723,8 +767,10 @@ struct DownloadActivity: Identifiable {
     }
     guard owner == session.account?.ownerId else { return }
     if let index = path.firstIndex(where: { route in
-      if case .entity(let id) = route { return ids.contains(id) }
-      return false
+      switch route {
+      case .entity(let id), .pages(let id): return ids.contains(id)
+      case .page: return false
+      }
     }) {
       path = Array(path.prefix(index))
       forwardPath = []
@@ -738,7 +784,7 @@ struct DownloadActivity: Identifiable {
         entityId: entity.id, pageIndex: page,
         favorite: starred ? old?.favorite ?? false : !(old?.favorite ?? false),
         starred: starred ? !(old?.starred ?? false) : old?.starred ?? false, progress: old?.progress
-      ))
+      ), immediate: true, fields: [starred ? "starred" : "favorite"])
   }
   func stateInput(_ id: String, page: Int? = nil) -> StateInput? {
     if let desired = desiredStates[id + ":" + (page.map(String.init) ?? "chapter")] {
@@ -749,43 +795,108 @@ struct DownloadActivity: Identifiable {
       entityId: id, pageIndex: page, favorite: saved.favorite, starred: saved.starred,
       progress: saved.progress)
   }
-  func writeState(_ input: StateInput) {
+  private func persistStates() {
+    guard let directory = session.cacheDirectory else { return }
+    outboxSequence &+= 1
+    let sequence = outboxSequence
+    let values = desiredStates
+    let progress = progressOnlyKeys
+    let fields = desiredStateFields
+    Task { do { try await stateOutbox.save(values, progress: progress, fields: fields, directory: directory, sequence: sequence) }
+      catch { show(error) } }
+  }
+  func persistStatesNow() async {
+    guard let directory = session.cacheDirectory else { return }
+    outboxSequence &+= 1
+    do { try await stateOutbox.save(desiredStates, progress: progressOnlyKeys, fields: desiredStateFields, directory: directory, sequence: outboxSequence) }
+    catch { show(error) }
+  }
+  func restoreStateOutbox() async {
+    guard let owner = session.account?.ownerId, let directory = session.cacheDirectory else { return }
+    do {
+      let entries = try await stateOutbox.load(directory: directory)
+      guard session.account?.ownerId == owner else { return }
+      for entry in entries { writeState(entry.input, immediate: false, progressOnly: entry.progressOnly, fields: entry.fields.map(Set.init)) }
+    } catch { show(error) }
+  }
+  func flushStates() {
+    if Date() >= nextStateAttempt { stateDelayTask?.cancel() }
+    urgentStateKeys.formUnion(pendingStates.keys)
+  }
+  func writeState(_ input: StateInput, immediate: Bool = false, progressOnly: Bool = false, fields: Set<String>? = nil) {
     let key = input.entityId + ":" + (input.pageIndex.map(String.init) ?? "chapter")
-    pendingStates[key] = input
-    desiredStates[key] = input
+    let changed = fields ?? (progressOnly ? ["progress"] : ["favorite", "starred", "progress"])
+    pendingStateFields[key, default: []].formUnion(changed)
+    desiredStateFields[key, default: []].formUnion(changed)
+    if progressOnly, desiredStates[key] == nil { progressOnlyKeys.insert(key) }
+    if !progressOnly { progressOnlyKeys.remove(key) }
+    pendingStates[key] = input; desiredStates[key] = input
+    persistStates()
+    if immediate {
+      urgentStateKeys.insert(key)
+      if Date() >= nextStateAttempt { stateDelayTask?.cancel() }
+    }
     guard stateTask == nil else { return }
     let epoch = stateEpoch
     stateTask = Task {
-      defer { if stateEpoch == epoch { stateTask = nil } }
-      while !Task.isCancelled && epoch == stateEpoch, let key = pendingStates.keys.first,
-        let input = pendingStates.removeValue(forKey: key)
-      {
+      defer { if stateEpoch == epoch { stateTask = nil; stateDelayTask = nil } }
+      var failures = 0
+      while !Task.isCancelled && epoch == stateEpoch && !pendingStates.isEmpty {
+        let backoff = nextStateAttempt.timeIntervalSinceNow
+        if backoff > 0 || urgentStateKeys.isEmpty {
+          let delay = Task<Void, Never> { try? await Task.sleep(for: .seconds(backoff > 0 ? backoff : 5)) }
+          stateDelayTask = delay; await delay.value; stateDelayTask = nil
+        }
+        if Date() < nextStateAttempt { continue }
+        guard !Task.isCancelled, epoch == stateEpoch,
+          let key = urgentStateKeys.first(where: { pendingStates[$0] != nil }) ?? pendingStates.keys.first,
+          let input = pendingStates.removeValue(forKey: key) else { return }
+        urgentStateKeys.remove(key)
+        let changed = pendingStateFields.removeValue(forKey: key) ?? ["favorite", "starred", "progress"]
+        @MainActor func mergingIntent() -> StateInput {
+          let remote = session.personalState(input.entityId, page: input.pageIndex)
+          return StateInput(entityId: input.entityId, pageIndex: input.pageIndex,
+            favorite: changed.contains("favorite") ? input.favorite : remote?.favorite ?? false,
+            starred: changed.contains("starred") ? input.starred : remote?.starred ?? false,
+            progress: changed.contains("progress") ? input.progress : remote?.progress)
+        }
         guard entity(input.entityId) != nil else {
-          desiredStates.removeValue(forKey: key)
-          continue
+          desiredStates.removeValue(forKey: key); progressOnlyKeys.remove(key)
+          desiredStateFields.removeValue(forKey: key); persistStates(); continue
         }
         do {
-          try await session.saveState(input)
-          if pendingStates[key] == nil { desiredStates.removeValue(forKey: key) }
+          do { try await session.saveState(mergingIntent()) }
+          catch let error as APIError where error.status == 409 {
+            try await session.reloadState(entity: input.entityId, page: input.pageIndex)
+            try await session.saveState(mergingIntent())
+          }
+          failures = 0; nextStateAttempt = .distantPast
+          if pendingStates[key] == nil {
+            desiredStates.removeValue(forKey: key); progressOnlyKeys.remove(key); desiredStateFields.removeValue(forKey: key)
+          } else { desiredStateFields[key] = pendingStateFields[key] }
+          persistStates()
         } catch {
-          if epoch != stateEpoch { return }
+          guard epoch == stateEpoch else { return }
           if entity(input.entityId) == nil {
-            desiredStates.removeValue(forKey: key)
-            continue
+            desiredStates.removeValue(forKey: key); progressOnlyKeys.remove(key)
+            desiredStateFields.removeValue(forKey: key); persistStates(); continue
           }
-          if let error = error as? APIError, error.status == 409 {
-            do {
-              try await session.synchronize()
-              try await session.saveState(input)
-            } catch { show(error) }
-          } else {
-            show(error)
+          if let api = error as? APIError, [400,401,402,403,404,409,422].contains(api.status) {
+            // Keep the durable intent for deliberate retry; never spin on a rejected write.
+            pendingStateFields[key, default: []].formUnion(changed)
+            show(error); return
           }
+          if pendingStates[key] == nil { pendingStates[key] = input }
+          pendingStateFields[key, default: []].formUnion(changed)
+          failures += 1
+          if failures == 1 { show(error) }
+          let delay = max((error as? APIError)?.retryAfter ?? 0, min(300, 5 * pow(2, Double(min(failures, 6)))))
+          nextStateAttempt = Date().addingTimeInterval(delay)
         }
       }
     }
   }
-  func synchronize() { Task { do { try await session.synchronize() } catch { show(error) } } }
+  func synchronize() { Task { do { try await session.synchronize(force: true) } catch { show(error) } } }
   func edit(_ entity: LibraryEntity) {
     guard canManage else { return }
     editor = .init(entity: entity, kind: entity.kind)
@@ -805,5 +916,23 @@ struct DownloadActivity: Identifiable {
       cancelDownload(activity.id)
     }
     activities.removeAll { entity($0.id) == nil }
+  }
+}
+
+// Owner-local durable latest intentions; no credentials or other accounts' data.
+private actor ReadingStateOutbox {
+  struct Entry: Codable, Sendable { let input: StateInput; let progressOnly: Bool; var fields: [String]? = nil }
+  private var sequences: [String: UInt64] = [:]
+  func save(_ values: [String: StateInput], progress: Set<String>, fields: [String: Set<String>], directory: URL, sequence: UInt64) throws {
+    guard sequence >= sequences[directory.path, default: 0] else { return }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let entries = values.map { Entry(input: $0.value, progressOnly: progress.contains($0.key), fields: fields[$0.key]?.sorted()) }
+    try JSONEncoder().encode(entries).write(to: directory.appendingPathComponent("reading-outbox.json"), options: .atomic)
+    sequences[directory.path] = sequence
+  }
+  func load(directory: URL) throws -> [Entry] {
+    let file = directory.appendingPathComponent("reading-outbox.json")
+    guard FileManager.default.fileExists(atPath: file.path) else { return [] }
+    return try JSONDecoder().decode([Entry].self, from: Data(contentsOf: file))
   }
 }

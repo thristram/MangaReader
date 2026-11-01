@@ -20,6 +20,22 @@ final class SourceReferenceIndexTests: XCTestCase {
     return url
   }
 
+  func testCandidateCanonicalizationResolvesParentsOnceAndRefreshesAliases() throws {
+    try withDirectory { root in
+      let pages = try (0..<100).map { try file("Chapter/\($0).png", under: root) }
+      let alias = root.appendingPathComponent("Chapter/alias.png")
+      try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: pages[0])
+      var probes = SourceReferenceIndex.Probes()
+      XCTAssertEqual(try SourceReferenceIndex.canonicalSources(pages + [alias], probes: &probes), Set(pages.map(\.path)))
+      XCTAssertEqual(probes.directoriesResolved, 1)
+      XCTAssertEqual(probes.directoriesListed, 1)
+      XCTAssertEqual(probes.filesResolved, 1)
+      try FileManager.default.removeItem(at: alias)
+      try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: pages[1])
+      XCTAssertEqual(try SourceReferenceIndex.canonicalSources([alias]), [pages[1].path])
+    }
+  }
+
   func testSharedMediaExclusionAndRootBoundaries() throws {
     try withDirectory { root in
       let source = try file("chapter/01.png", under: root)
@@ -113,6 +129,29 @@ final class SourceReferenceIndexTests: XCTestCase {
         XCTAssertTrue(try SourceReferenceIndex(media: [version]).containsAny(of: [source.path],
           under: root, rootID: "root", excluding: "new"))
       }
+    }
+  }
+  func testBatchSharingExcludesWholeChapterButFindsAllExternalAliases() throws {
+    try withDirectory { root in
+      let first = try file("chapter/1.png", under: root)
+      let second = try file("chapter/2.png", under: root)
+      let own = try file("chapter/3.png", under: root)
+      try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("alias.png"),
+        withDestinationURL: second)
+      let index = SourceReferenceIndex(media: [media("original", ["chapter/1.png", "chapter/3.png"]),
+        media("translation", ["chapter/2.png"]), media("external", ["chapter/1.png", "alias.png"])])
+      XCTAssertEqual(try index.matchingSources([first.path, second.path, own.path], under: root,
+        rootID: "root", excluding: ["original", "translation"]), [first.path, second.path])
+      XCTAssertTrue(try index.matchingSources([], under: root, rootID: "root", excluding: []).isEmpty)
+      XCTAssertTrue(index.rootIDs(excluding: ["original", "translation", "external"]).isEmpty)
+    }
+  }
+  func testCaseAliasesAreConservativelyRetainedWithoutReadingPageBytes() throws {
+    try withDirectory { root in
+      let page = try file("Chapter/Page.PNG", under: root)
+      let index = SourceReferenceIndex(media: [media("other", ["Chapter/page.png"])])
+      XCTAssertEqual(try index.matchingSources([page.path], under: root, rootID: "root",
+        excluding: []), [page.path])
     }
   }
 }

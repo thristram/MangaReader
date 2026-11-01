@@ -53,11 +53,24 @@ Finder tags are a data-plane projection of favorite/star metadata. Their failure
 
 ## Sync and concurrency
 
-Current v1 uses a complete account snapshot every 30 seconds while an app is open, and on explicit refresh / iPhone foreground. It includes tombstones and NSFW metadata so clients can apply inheritance. Snapshot is bootstrap-only, bounded at 10,000 entities and 10,000 states; it is not a transactional point-in-time snapshot across collections. The next poll reconciles concurrent writes.
+Current clients reconcile owner-scoped id/revision manifests, then fetch only changed
+records in bounded batches. Conditional ETags return 304 without media/descriptions.
+Mac checks at launch, after coalesced metadata updates, once at ten minutes idle,
+on return from a long idle period and manually. iPhone checks while active every
+two minutes and on foreground entry. There is no continuous Mac polling. First-use
+bootstrap remains bounded at 10,000 entities and 10,000 states.
 
-Writes send the current integer revision via `If-Match`; a stale write returns 409. No automatic last-writer-wins. Initial apps require a connection for writes; failed reads may retain already-loaded metadata, but reopening requires online account verification. Persisted offline outbox, conflict-resolution UI, incremental cursor and bounded offline re-entry are pending. There is no claim that this milestone supports a complete offline sync protocol.
+Native metadata edits use small revision-checked JSON PATCHes and mutation receipts;
+progress coalesces for five seconds and flushes on reader exit/background. Pending
+reading-state intentions persist per account and retry without library downloads;
+conflicts reload only the target state. Failure backoff, single-flight refresh,
+revision merging and sign-out guards prevent redundant work and stale replacement.
+The wire-only directory/file representation expands into existing cache/media paths.
 
-Planned release sync: durable owner-scoped local database/outbox, mutation UUID/idempotency, per-account change sequence committed with mutations in MongoDB transactions, tombstone retention and explicit merge UI. Progress must reconcile reading sessions rather than always take maximum page (rereads can legitimately move backwards).
+The manifest protocol is not a transaction-backed change stream. Durable offline
+metadata edits, mutation UUID/idempotency, multi-document transactions, conflict UI
+and bounded offline reauthentication remain release work. See
+[ADR 0018](adr/0018-demand-driven-sync-and-small-mutations.md).
 
 ## Visibility
 
@@ -81,3 +94,7 @@ SwiftUI handles grids, sheets, navigation and system chrome; AppKit/UIKit host t
 ## Optional rendered image translation
 
 The Mac talks directly to a separately deployed manga-image-translator service, serializes page jobs in an account-local queue, caches validated results, then commits aligned media versions and archive files through existing journals. Vercel/MongoDB remain the metadata control plane. iPhone reads committed translations normally. See [Mac image translation](apple/manga-image-translation-2026-10-18.md) and [ADR 0015](adr/0015-local-page-image-translation-queue.md).
+
+## Organization update — 2026-10-22
+
+Metadata-only chapter reassignment inherits the target comic's author/Series and preserves file references. The common Mac organization executor skips unchanged references, batches shared-source checks, and uses persisted identities for exclusive same-volume links/renames. Shared/cross-volume files retain verified copies. Journaled rename can precede metadata; interrupted work resumes from its recorded destination. See [ADR 0017](adr/0017-same-volume-organization.md). No service contract or database schema changes.

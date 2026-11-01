@@ -93,6 +93,8 @@ struct LibrarySettingsScreen: View {
         Section("Local Ollama") {
           TextField("Service URL", text: $host).fullFieldFocus()
           TextField("Model", text: $model).fullFieldFocus()
+          Text("Use an exact model name installed on this Ollama host. Test Connection refreshes Installed Models; it does not download models.")
+            .font(.caption).foregroundStyle(.secondary)
           HStack {
             Button(testing ? "Connecting…" : "Test Connection", action: testOllama).disabled(
               testing)
@@ -202,15 +204,19 @@ struct LibrarySettingsScreen: View {
         Section("Automatic Sync") {
           Label(
             session.status,
-            systemImage: session.status == "Library synced" ? "checkmark.icloud" : "icloud")
+            systemImage: ["Library synced", "Library is up to date"].contains(session.status) ? "checkmark.icloud" : "icloud")
           Text(
             "Titles, descriptions, translations, tags, favorites, stars and reading progress sync across your devices."
           )
           Button(
             "Sync Now", systemImage: "arrow.triangle.2.circlepath", action: library.synchronize)
-          Text(
-            "While open, the library refreshes every 30 seconds. Metadata changes currently require a connection."
-          ).font(.caption).foregroundStyle(.secondary)
+          #if os(macOS)
+            Text("The library checks at launch, after edits and after ten minutes without activity. Sync Now checks immediately. Only changes are downloaded.")
+              .font(.caption).foregroundStyle(.secondary)
+          #else
+            Text("The library checks when you return and every two minutes while active. Only changes are downloaded.")
+              .font(.caption).foregroundStyle(.secondary)
+          #endif
         }
       case .files:
         Section("Finder Tags") {
@@ -273,15 +279,28 @@ struct LibrarySettingsScreen: View {
       defaultFilename: "MangaReader-library.json"
     ) { result in if case .failure(let error) = result { library.show(error) } }
     .onChange(of: language) { _, _ in library.visibilityChanged() }
+    .onChange(of: host) { _, _ in models = []; connectionStatus = "" }
+    .onChange(of: model) { _, _ in connectionStatus = "" }
   }
   private func testOllama() {
     testing = true
+    let endpoint = host
     Task {
       defer { testing = false }
       do {
-        models = try await OllamaTranslator.models(host: host)
-        connectionStatus = "Connected · \(models.count) installed models"
-      } catch { connectionStatus = error.localizedDescription }
+        let installed = try await OllamaTranslator.models(host: endpoint)
+        guard endpoint == host else { return }
+        models = installed
+        let selected = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tagged = (selected.split(separator: "/").last?.contains(":") == true) ? selected : selected + ":latest"
+        if installed.isEmpty {
+          connectionStatus = "Connected, but this Ollama host has no installed models. Install a model on that host, then test again."
+        } else if !selected.isEmpty && !installed.contains(selected) && !installed.contains(tagged) {
+          connectionStatus = "Connected, but model “\(selected)” is not installed on this host. Choose an Installed Model."
+        } else { connectionStatus = "Connected · \(installed.count) installed models" }
+      } catch {
+        if endpoint == host { models = []; connectionStatus = error.localizedDescription }
+      }
     }
   }
 }

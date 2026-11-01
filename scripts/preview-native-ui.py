@@ -15,6 +15,8 @@ parser.add_argument("platform", choices=["mac", "phone"])
 parser.add_argument("--destination", help="Override the Xcode destination, such as platform=iOS Simulator,id=…")
 parser.add_argument("--sandbox", action="store_true", help="Sign an isolated Mac preview with the real sandbox entitlements")
 parser.add_argument("--reader-checks", action="store_true", help="Build the isolated iPhone reader regression app")
+parser.add_argument("--capture-links", action="store_true", help="Capture source link taps in the isolated fixture directory instead of opening external sites")
+parser.add_argument("--long-description", action="store_true", help="Use a long synthetic chapter description to inspect scrolling and text-size controls")
 args = parser.parse_args()
 if args.sandbox and args.platform != "mac": parser.error("--sandbox requires mac")
 if args.reader_checks and args.platform != "phone": parser.error("--reader-checks requires phone")
@@ -33,6 +35,15 @@ smb = preview / "packages/AMSMB2"
 if not smb.exists(): smb.symlink_to(root / "packages/AMSMB2", target_is_directory=True)
 shutil.copy2(root / "scripts/generate-xcode-project.py", preview / "scripts/generate-xcode-project.py")
 shutil.copy2(root / "scripts/native-ui-fixtures.swift", app / "Shared/NativeUIFixtures.swift")
+if args.long_description:
+    fixture = app / "Shared/NativeUIFixtures.swift"
+    paragraphs = ["Beginning of chapter description."] + [
+        f"Paragraph {i}. The rain has stopped, and the journey continues. A long description should remain readable at every text size. 长篇章节描述可以上下滚动。"
+        for i in range(1, 41)
+    ] + ["End of chapter description."]
+    fixture.write_text(fixture.read_text().replace(
+        '"An unexpected reunion by the station after the rain."',
+        json.dumps("\n\n".join(paragraphs), ensure_ascii=False)))
 (app / "Config/Base.xcconfig").write_text('MAC_OAUTH_CLIENT_ID = configure-preview\nIPHONE_OAUTH_CLIENT_ID = configure-preview\n#include "Service.xcconfig"\n')
 project = app / "MangaReader.xcodeproj/project.pbxproj"
 data = json.loads(subprocess.check_output(["plutil", "-convert", "json", "-o", "-", str(project)]))
@@ -60,10 +71,19 @@ import SwiftUI
       let session = NativeUIFixtures.makeSession(cacheRoot: directory.appendingPathComponent("cache"))
       model = try NativeUIFixtures.seed(session: session, directory: directory)
       try NativeUIFixtures.organizeLanguagePreview(session: session, directory: directory)
+      ''' + ('UserDefaults.standard.set(true, forKey: "ReaderDescription")' if args.long_description else '') + '''
       window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 850), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
       window.title = "MangaReader · Native UI Preview"; window.titleVisibility = .hidden
       window.titlebarAppearsTransparent = true; window.toolbarStyle = .unified
-      let hosting = NSHostingController(rootView: MangaRootScreen(session: session, library: model)); hosting.sizingOptions = []
+      let rootView = MangaRootScreen(session: session, library: model)
+        .environment(\.openURL, OpenURLAction { url in
+          if ''' + ('true' if args.capture_links else 'false') + ''' {
+            try? url.absoluteString.write(to: directory.appendingPathComponent("captured-source-url.txt"), atomically: true, encoding: .utf8)
+            return .handled
+          }
+          return .systemAction
+        })
+      let hosting = NSHostingController(rootView: rootView); hosting.sizingOptions = []
       window.contentViewController = hosting
       window.minSize = NSSize(width: 760, height: 560)
       window.setContentSize(NSSize(width: 1200, height: 850))
@@ -82,6 +102,7 @@ import SwiftUI
       editItem.submenu = edit; menu.addItem(editItem)
       NSApp.mainMenu = menu
       window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+      ''' + ('if let chapter = model.entity("c0-1") { model.open(chapter) }' if args.long_description else '') + '''
     } catch { NSLog("Preview setup failed: %@", error.localizedDescription); NSApp.terminate(nil) }
   }
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -101,8 +122,17 @@ final class PhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
       let session = NativeUIFixtures.makeSession(cacheRoot: directory.appendingPathComponent("cache"))
       let model = try NativeUIFixtures.seed(session: session, directory: directory)
       let window = UIWindow(windowScene: scene)
-      window.rootViewController = UIHostingController(rootView: MangaRootScreen(session: session, library: model))
+      let rootView = MangaRootScreen(session: session, library: model)
+        .environment(\.openURL, OpenURLAction { url in
+          if ''' + ('true' if args.capture_links else 'false') + ''' {
+            try? url.absoluteString.write(to: directory.appendingPathComponent("captured-source-url.txt"), atomically: true, encoding: .utf8)
+            return .handled
+          }
+          return .systemAction
+        })
+      window.rootViewController = UIHostingController(rootView: rootView)
       self.window = window; window.makeKeyAndVisible()
+      ''' + ('if let chapter = model.entity("c0-1") { model.open(chapter) }' if args.long_description else '') + '''
     } catch { fatalError("Preview setup failed") }
   }
 }

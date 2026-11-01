@@ -15,6 +15,7 @@ import AppKit
 @MainActor final class MacAppDelegate: NSObject, NSApplicationDelegate {
   var window: NSWindow!
   let session = AppSession()
+  private var activityMonitor: Any?
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.regular)
     let menu = NSMenu()
@@ -58,6 +59,24 @@ import AppKit
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
     session.restore()
+    activityMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .scrollWheel, .mouseMoved]) { [weak self] event in
+      self?.session.noteActivity()
+      return event
+    }
+  }
+  func applicationDidBecomeActive(_ notification: Notification) { session.setAppActive(true) }
+  func applicationDidResignActive(_ notification: Notification) { session.setAppActive(false) }
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    session.flushReadingState?()
+    Task {
+      await session.persistReadingState?()
+      sender.reply(toApplicationShouldTerminate: true)
+    }
+    return .terminateLater
+  }
+  func applicationWillTerminate(_ notification: Notification) {
+    session.flushReadingState?()
+    if let activityMonitor { NSEvent.removeMonitor(activityMonitor) }
   }
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }

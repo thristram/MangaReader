@@ -13,6 +13,42 @@ struct TemporaryOrganizationRow: Identifiable {
   }
 }
 
+/// Completed history is immutable unless its on-disk identity changes. Pending
+/// records are always re-read; never cache a negative answer across journal writes.
+actor PendingFileJournalIndex {
+  private var completed: [String: FileIdentity] = [:]
+  private(set) var decodedRecords = 0
+  func pending(in cache: URL) throws -> Set<String> {
+    var result = Set<String>()
+    var seen = Set<String>()
+    for name in ["organization-journals", "commit-journals", "delete-journals"] {
+      let directory = cache.appendingPathComponent(name)
+      guard FileManager.default.fileExists(atPath: directory.path) else { continue }
+      for url in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+      where url.pathExtension == "json" && !url.lastPathComponent.contains("-metadata") {
+        try Task.checkCancellation()
+        seen.insert(url.path)
+        let identity = try? FileIdentity.read(url)
+        if let identity, completed[url.path] == identity { continue }
+        let value = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        decodedRecords += 1
+        guard let phase = value?["phase"] as? String else { continue }
+        if ["complete", "rolledBack"].contains(phase) { completed[url.path] = identity; continue }
+        completed[url.path] = nil
+        if let id = value?["entityId"] as? String { result.insert(id) }
+        else if name == "commit-journals", let id = value?["id"] as? String {
+          let payload = directory.appendingPathComponent(id + "-metadata.json")
+          if FileManager.default.fileExists(atPath: payload.path),
+            let metadata = try JSONSerialization.jsonObject(with: Data(contentsOf: payload)) as? [String: Any],
+            let entity = metadata["entityId"] as? String { result.insert(entity) }
+        }
+      }
+    }
+    completed = completed.filter { seen.contains($0.key) }
+    return result
+  }
+}
+
 extension LibraryUIModel {
   func temporaryOrganizationRows() -> [TemporaryOrganizationRow] {
     let sourceRoots = Set(session.entities.filter {
@@ -35,27 +71,10 @@ extension LibraryUIModel {
 
   func pendingFileOrganizationIds() async throws -> Set<String> {
     guard let cache = session.cacheDirectory else { throw LoginError.invalidToken }
-    return try await FileTasks.perform {
-      var result = Set<String>()
-      for name in ["organization-journals", "commit-journals", "delete-journals"] {
-        let directory = cache.appendingPathComponent(name)
-        guard FileManager.default.fileExists(atPath: directory.path) else { continue }
-        for url in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-        where url.pathExtension == "json" && !url.lastPathComponent.contains("-metadata") {
-          let data = try Data(contentsOf: url)
-          let value = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-          guard let phase = value?["phase"] as? String, !["complete", "rolledBack"].contains(phase) else { continue }
-          if let id = value?["entityId"] as? String { result.insert(id) }
-          else if name == "commit-journals", let id = value?["id"] as? String {
-            let payload = directory.appendingPathComponent(id + "-metadata.json")
-            if FileManager.default.fileExists(atPath: payload.path),
-              let metadata = try JSONSerialization.jsonObject(with: Data(contentsOf: payload)) as? [String: Any],
-              let entity = metadata["entityId"] as? String { result.insert(entity) }
-          }
-        }
-      }
-      return result
-    }
+    let owner = session.account?.ownerId
+    let result = try await pendingJournalIndex.pending(in: cache)
+    guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
+    return result
   }
 
   @discardableResult func moveTemporaryFiles(
@@ -83,7 +102,9 @@ extension LibraryUIModel {
 
   func organizeChapterFiles(
     _ chapter: LibraryEntity, destination: LibraryEntity,
-    metadata: MetadataInput? = nil,
+    metadata: MetadataInput? = nil, recomputePaths: Bool = true,
+    supplementalFiles: [OrganizationFile] = [], cleanupFolders: [EmptyMediaFolder] = [],
+    destinationFolders: [String] = [],
     progress: @escaping @MainActor @Sendable (Double) -> Void = { _ in }
   ) async throws
   {
@@ -102,14 +123,14 @@ extension LibraryUIModel {
     let folder = try await local.validateDestinationAsync(destination)
     try Task.checkCancellation()
     guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
-    let author = entity(chapter.authorId)?.title
-    let work = entity(chapter.workId)
-    let series = entity(chapter.seriesId ?? work?.seriesId)?.title
     var update = metadata ?? chapter.input
+    let author = entity(update.authorId)?.title
+    let work = entity(update.workId)
+    let series = entity(update.seriesId ?? work?.seriesId)?.title
     var plans: [OrganizationFile] = []
     var scoped: [URL] = []
     defer { scoped.forEach { $0.stopAccessingSecurityScopedResource() } }
-    let sourceRootIds = Array(Set(update.media.map(\.storageRootId)))
+    let sourceRootIds = Array(Set((update.media + chapter.media).map(\.storageRootId)))
     // Bookmark access happens on the main actor; all path checks and file work happen off it.
     var sources: [String: URL] = [:]
     for rootId in sourceRootIds {
@@ -126,44 +147,82 @@ extension LibraryUIModel {
       }
       sources[rootId] = root
     }
-    let otherMedia = session.entities.filter { !$0.deleted && $0.id != chapter.id }.flatMap(\.media)
-    let referenceRoots = try await local.referenceRoots(for: otherMedia)
-    let usedElsewhere = try await FileTasks.perform {
-      var paths = Set<String>()
-      for media in otherMedia {
+    // Build the exact changed-file list in one background pass. Unchanged media
+    // never incurs per-file path checks or content reads.
+    struct Relocation: Sendable { let mediaID: String; let source: URL; let path: String }
+    let originalMedia = Dictionary(uniqueKeysWithValues: chapter.media.map { ($0.id, $0) })
+    let initial = update
+    let roots = sources
+    let result = try await FileTasks.perform {
+      var update = initial
+      var moves: [Relocation] = []
+      for index in update.media.indices {
         try Task.checkCancellation()
-        if let root = referenceRoots[media.storageRootId] {
-          for path in media.relativePaths {
-            paths.insert(root.appendingPathComponent(path).standardizedFileURL.path.lowercased())
+        let media = update.media[index]
+        let paths: [String]
+        if recomputePaths {
+          let languagePath = try PathPolicy.chapterPath(author: author, series: series,
+            work: work?.title, chapter: update.title, language: media.language,
+            mediaLanguageCount: update.media.count)
+          paths = media.relativePaths.map { languagePath + "/" + URL(fileURLWithPath: $0).lastPathComponent }
+        } else { paths = media.relativePaths }
+        // Exact-path plans (language changes) use original metadata as the source.
+        let before = recomputePaths ? media : (originalMedia[media.id] ?? media)
+        guard before.relativePaths.count == paths.count,
+          let beforeRoot = roots[before.storageRootId] else { throw StorageError.verificationFailed }
+        for (old, new) in zip(before.relativePaths, paths) {
+          if before.storageRootId == destination.id && old == new { continue }
+          let source = try PathPolicy.mutationPath(old, under: beforeRoot)
+          let target = folder.appendingPathComponent(new).standardizedFileURL
+          if source.standardizedFileURL != target {
+            moves.append(Relocation(mediaID: media.id, source: source, path: new))
           }
         }
+        update.media[index].storageRootId = destination.id
+        update.media[index].relativePaths = paths
       }
-      return paths
+      let moved = Set(moves.map(\.source.path))
+      for file in supplementalFiles where !moved.contains(file.source) {
+        moves.append(Relocation(mediaID: "", source: URL(fileURLWithPath: file.source), path: file.relativePath))
+      }
+      return (update, moves)
     }
-    for index in update.media.indices {
-      let media = update.media[index]
-      guard let sourceRoot = sources[media.storageRootId] else { throw LoginError.invalidToken }
-      let languagePath = try PathPolicy.chapterPath(
-        author: author, series: series, work: work?.title,
-        chapter: chapter.title, language: media.language, mediaLanguageCount: update.media.count)
-      let paths = media.relativePaths.map {
-        languagePath + "/" + URL(fileURLWithPath: $0).lastPathComponent
-      }
-      for (old, new) in zip(media.relativePaths, paths) {
-        let source = try await FileTasks.perform {
-          try PathPolicy.mutationPath(old, under: sourceRoot)
+    update = result.0
+    let shared = try await local.sharedSources(result.1.map(\.source),
+      excluding: Set(chapter.media.map(\.id)))
+    // A retained page in this same chapter can also share a moved source.
+    let retained = try await FileTasks.perform {
+      Set(initial.media.flatMap { media -> [String] in
+        guard let root = roots[media.storageRootId] else { return [] }
+        let changed = Set(result.1.filter { $0.mediaID == media.id }.map { $0.source.path.lowercased() })
+        return media.relativePaths.compactMap {
+          let path = root.appendingPathComponent($0).standardizedFileURL.path.lowercased()
+          return changed.contains(path) ? nil : path
         }
-        let target = folder.appendingPathComponent(new).standardizedFileURL
-        if source.standardizedFileURL != target {
-          plans.append(
-            OrganizationFile(
-              source: source, relativePath: new,
-              keepSource: usedElsewhere.contains(source.standardizedFileURL.path.lowercased())))
-        }
-      }
-      update.media[index].storageRootId = destination.id
-      update.media[index].relativePaths = paths
+      })
     }
+    let duplicateSources = Set(Dictionary(grouping: result.1, by: { $0.source.path.lowercased() })
+      .filter { $0.value.count > 1 }.keys)
+    let preserveFolderOriginals = !supplementalFiles.isEmpty && result.1.contains {
+      shared.contains($0.source.path) || retained.contains($0.source.path.lowercased())
+    }
+    plans = result.1.map {
+      OrganizationFile(source: $0.source, relativePath: $0.path,
+        keepSource: preserveFolderOriginals || shared.contains($0.source.path)
+          || retained.contains($0.source.path.lowercased())
+          || duplicateSources.contains($0.source.path.lowercased()))
+    }
+    let movedSources = Set(plans.filter { !$0.keepSource }.map(\.source))
+    let cleanupMedia = chapter.media.map { media in
+      var version = media
+      version.relativePaths = media.relativePaths.filter { path in
+        guard let root = roots[media.storageRootId] else { return false }
+        return movedSources.contains(root.appendingPathComponent(path).standardizedFileURL.path)
+      }
+      return version
+    }
+    let cleanup = EmptyMediaFolder.plan(media: cleanupMedia, roots: sources, chapterTitle: chapter.title)
+      + cleanupFolders
     let files = plans
     let metadata = update
     try Task.checkCancellation()
@@ -172,7 +231,8 @@ extension LibraryUIModel {
       try FileOrganization.prepare(
         entityId: chapter.id, revision: chapter.revision,
         metadata: metadata, libraryId: owner, rootId: destination.id, root: folder,
-        sourceRootIds: sourceRootIds, files: files, directory: directory)
+        sourceRootIds: sourceRootIds, files: files, directory: directory, cleanupFolders: cleanup,
+        originalMetadata: chapter.input, allowRename: true, destinationFolders: destinationFolders)
     }
     try Task.checkCancellation()
     guard owner == session.account?.ownerId else { throw LoginError.invalidToken }

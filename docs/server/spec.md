@@ -8,6 +8,17 @@ Entry points: `src/index.ts` (Vercel Express export) and `src/dev.ts` (local HTT
 
 Collections: `entities`, `states`, `schema_migrations`. Each metadata/state operation uses compound account identity and public ID. Creation relies on required unique compound indexes; updates/deletions compare the expected revision. Deletion stores tombstones and refuses visible references. Mongo pool maximum 10; failed initial connections clear the cached promise for retry. Secrets stay in environment, never response bodies or logs.
 
-The v1 synchronization endpoint reads the complete account metadata and states separately. It is bounded, eventually consistent and includes hidden/tombstoned metadata. It is deliberately not presented as a resumable incremental change stream. The next milestone must add a transaction-backed account sequence plus durable idempotency receipts and client outboxes; it must also make reference create/delete checks atomic across documents.
+Legacy `/v1/sync` remains compatible. Current clients use `/v1/sync/manifest`
+(projected owner/id/revision/deleted, conditional ETag) and `/v1/sync/records`
+(explicit ID batches, compact path transport, 3-MB response budget with deferrals).
+No in-process cursor can omit another instance's write. Reads are eventually
+consistent and revision-merged; this is not a transactional change log.
+
+Native PATCHes are schema/reference/CAS validated and return a small receipt.
+Mongo uses small atomic operators where their semantics match RFC 6902, otherwise
+safe replacement. Detail, state, paginated list and reference existence queries
+avoid full library reads. Fetch only visibility dependencies. Compress responses
+larger than 4 KB at level 1; retain no-store and owner-scoped authorization.
+Transaction-backed multi-document management/idempotency remains future work.
 
 Canonical shapes/limits: [OpenAPI](../../packages/api-contract/openapi.json), generated from `src/domain.ts`. API semantics: [contract](../api-contract.md). Migration/operation details: [README](README.md).

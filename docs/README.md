@@ -20,3 +20,7 @@ Change requirements/spec and implementation status together when behavior change
 - [SwiftUI native UI review and screenshots](apple/ui-verification.md)
 
 - [Mac manga image translation, defaults and queue recovery](apple/manga-image-translation-2026-10-18.md)
+
+- [Chapter reassignment and same-volume organization](apple/chapter-reassignment-and-organization-2026-10-22.md)
+
+- [Demand-driven sync and small mutations](adr/0018-demand-driven-sync-and-small-mutations.md): refresh policy, selective reads, PATCH receipts, progress outbox and rollout.

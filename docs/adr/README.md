@@ -20,3 +20,7 @@ See each ADR for its acceptance date. An ADR can accept the target design while 
 - [0014: Journaled media-folder cleanup and image additions](0014-journaled-media-folder-cleanup.md)
 - [0015: Local page image translation queue](0015-local-page-image-translation-queue.md)
 - [0016: Import shared-source reference index](0016-import-source-reference-index.md)
+
+- [0017: Same-volume organization without media-byte transfers](0017-same-volume-organization.md)
+
+- [0018: Demand-driven sync and small mutations](0018-demand-driven-sync-and-small-mutations.md)

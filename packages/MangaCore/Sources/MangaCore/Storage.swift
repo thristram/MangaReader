@@ -15,7 +15,7 @@ public enum StorageError: Error, LocalizedError {
     case .collision: return "The destination already exists. No files were overwritten."
     case .unsupportedMove: return "This file type cannot be moved."
     case .verificationFailed:
-      return "Files changed or the copy could not be verified. The original files were kept."
+      return "Files changed or could not be verified. Review Pending Organization before retrying."
     case .recycleRecoveryRequired:
       return
         "Files are safe in Recycle, but restoring their original paths needs review in Pending Organization."
@@ -43,15 +43,28 @@ public enum PathPolicy {
     return try fields.map(component).joined(separator: "/")
   }
   public static func mutationPath(_ path: String, under root: URL) throws -> URL {
-    let resolved = try resolve(path, under: root)
-    var url = root
-    for component in path.split(separator: "/") {
-      url.appendPathComponent(String(component))
-      if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {
-        throw StorageError.unsafePath
+    guard !path.hasPrefix("/"), !path.isEmpty else { throw StorageError.unsafePath }
+    let parts = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+    for part in parts { _ = try component(part) }
+    // Resolve the granted root once, then inspect each component once. Calling
+    // resolve for every prefix repeatedly walks the same NAS ancestors.
+    var url = root.resolvingSymlinksInPath().standardizedFileURL
+    var missing = false
+    for part in parts {
+      url.appendPathComponent(part)
+      if missing { continue }
+      var value = stat()
+      if lstat(url.path, &value) == 0 {
+        guard UInt32(value.st_mode) & UInt32(S_IFMT) != UInt32(S_IFLNK) else {
+          throw StorageError.unsafePath
+        }
+      } else if errno == ENOENT {
+        missing = true
+      } else {
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
       }
     }
-    return resolved
+    return url
   }
   public static func resolve(_ path: String, under root: URL) throws -> URL {
     guard !path.hasPrefix("/"), !path.isEmpty else { throw StorageError.unsafePath }
@@ -99,11 +112,11 @@ public enum ImportScanner {
     if values.isSymbolicLink == true { throw StorageError.unsafePath }
     guard values.isDirectory == true else {
       let ext = url.pathExtension.lowercased()
-      guard ext == "pdf" || ext == "webm" || ext == "mp4" else { throw StorageError.emptyChapter }
+      guard imageExtensions.contains(ext) || ext == "pdf" || ext == "webm" || ext == "mp4" else { throw StorageError.emptyChapter }
       return [
         .init(
           source: url, title: url.deletingPathExtension().lastPathComponent,
-          kind: ext == "pdf" ? "pdf" : "video", pages: [url], warnings: [])
+          kind: imageExtensions.contains(ext) ? "images" : ext == "pdf" ? "pdf" : "video", pages: [url], warnings: [])
       ]
     }
     let entries = try fm.contentsOfDirectory(
@@ -418,6 +431,8 @@ public struct RecycleJournal: Codable, Sendable {
     public var source: String
     public var destination: String
     public var digest: String
+    public var identity: FileIdentity? = nil
+    public var publishedIdentity: FileIdentity? = nil
   }
   public var id: String
   public var entityId: String
@@ -434,6 +449,28 @@ public enum FileRecycle {
       .validate(libraryId: entry.libraryId, destinationId: entry.rootId)
     return root
   }
+  private static func validates(_ entries: [RecycleJournal.Entry]) throws -> [String: URL] {
+    var roots: [String: URL] = [:]
+    for entry in entries {
+      let key = entry.root + "\0" + entry.rootId + "\0" + entry.libraryId
+      if roots[key] == nil { roots[key] = try validate(entry) }
+    }
+    return roots
+  }
+  private static func verifies(_ entry: RecycleJournal.Entry, at url: URL,
+    published: Bool, cancellable: Bool = true) throws -> Bool {
+    if let identity = published ? entry.publishedIdentity ?? entry.identity : entry.identity {
+      return try FileIdentity.read(url) == identity
+    }
+    guard !entry.digest.isEmpty else { throw StorageError.verificationFailed }
+    return try FileInventory.digest(url, checkCancellation: cancellable) == entry.digest
+  }
+  private static func move(_ entry: RecycleJournal.Entry, from source: URL, to target: URL) throws {
+    guard !FileManager.default.fileExists(atPath: target.path) else { throw StorageError.collision }
+    try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+    if entry.identity != nil { try FileIdentity.renameExclusively(source, to: target) }
+    else { try FileManager.default.moveItem(at: source, to: target) }
+  }
   private static func write(_ journal: RecycleJournal, in directory: URL) throws {
     try JSONEncoder().encode(journal).write(
       to: directory.appendingPathComponent(journal.id + ".json"), options: .atomic)
@@ -446,6 +483,7 @@ public enum FileRecycle {
     let id = UUID().uuidString
     var entries: [RecycleJournal.Entry] = []
     var seen = Set<String>()
+    var devices: [String: UInt64] = [:]
     for file in files {
       try Task.checkCancellation()
       let root = file.root.standardizedFileURL
@@ -457,29 +495,39 @@ public enum FileRecycle {
           == true,
         try source.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true
       else { throw StorageError.unsafePath }
-      let entry = RecycleJournal.Entry(
+      if devices[root.path] == nil { devices[root.path] = try FileIdentity.device(at: root) }
+      let snapshot = try? FileIdentity.read(source)
+      let sameVolume = snapshot?.device == devices[root.path]
+      entries.append(RecycleJournal.Entry(
         root: root.path, rootId: file.rootId, libraryId: file.libraryId,
         source: file.relativePath, destination: "Recycle/" + id + "/" + file.relativePath,
-        digest: try FileInventory.digest(source))
-      _ = try validate(entry)
-      entries.append(entry)
+        digest: sameVolume ? "" : try FileInventory.digest(source),
+        identity: sameVolume ? snapshot : nil))
     }
+    _ = try validates(entries)
     try fm.createDirectory(at: journalDirectory, withIntermediateDirectories: true)
     var journal = RecycleJournal(
       id: id, entityId: entityId, revision: revision, phase: "prepared", entries: entries, cleanupFolders: cleanupFolders)
     try write(journal, in: journalDirectory)
     do {
-      for entry in entries {
+      _ = try validates(entries)
+      for index in journal.entries.indices {
         try Task.checkCancellation()
-        let root = try validate(entry)
+        let entry = journal.entries[index]
+        let root = URL(fileURLWithPath: entry.root)
         let source = try PathPolicy.mutationPath(entry.source, under: root)
         let destination = try PathPolicy.mutationPath(entry.destination, under: root)
-        guard try FileInventory.digest(source) == entry.digest else {
-          throw StorageError.verificationFailed
+        guard try verifies(entry, at: source, published: false) else { throw StorageError.verificationFailed }
+        try move(entry, from: source, to: destination)
+        if let identity = entry.identity {
+          let published = try FileIdentity.read(destination)
+          guard published.device == identity.device, published.size == identity.size else {
+            throw StorageError.verificationFailed
+          }
+          journal.entries[index].publishedIdentity = published
+          // A NAS may change file IDs during rename; persist that proof immediately.
+          if published != identity { try write(journal, in: journalDirectory) }
         }
-        try fm.createDirectory(
-          at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try fm.moveItem(at: source, to: destination)
       }
       journal.phase = "filesRecycled_metadataPending"
       try write(journal, in: journalDirectory)
@@ -495,43 +543,45 @@ public enum FileRecycle {
   }
   public static func resume(_ journal: RecycleJournal, in directory: URL) throws -> RecycleJournal {
     let fm = FileManager.default
-    for entry in journal.entries {
+    _ = try validates(journal.entries)
+    var pending = journal
+    for index in pending.entries.indices {
       try Task.checkCancellation()
-      let root = try validate(entry)
+      let entry = pending.entries[index]
+      let root = URL(fileURLWithPath: entry.root)
       let original = try PathPolicy.mutationPath(entry.source, under: root)
       let recycled = try PathPolicy.mutationPath(entry.destination, under: root)
       if fm.fileExists(atPath: recycled.path) {
-        guard !fm.fileExists(atPath: original.path),
-          try FileInventory.digest(recycled) == entry.digest
+        guard !fm.fileExists(atPath: original.path), try verifies(entry, at: recycled, published: true)
         else { throw StorageError.verificationFailed }
       } else {
-        guard try FileInventory.digest(original) == entry.digest else {
-          throw StorageError.verificationFailed
+        guard try verifies(entry, at: original, published: false) else { throw StorageError.verificationFailed }
+        try move(entry, from: original, to: recycled)
+        if let identity = entry.identity {
+          let published = try FileIdentity.read(recycled)
+          guard published.device == identity.device, published.size == identity.size else { throw StorageError.verificationFailed }
+          pending.entries[index].publishedIdentity = published
+          if published != identity { try write(pending, in: directory) }
         }
-        try fm.createDirectory(
-          at: recycled.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try fm.moveItem(at: original, to: recycled)
       }
     }
-    var pending = journal
     pending.phase = "filesRecycled_metadataPending"
     try write(pending, in: directory)
     return pending
   }
   public static func rollback(_ journal: RecycleJournal, in directory: URL) throws {
     let fm = FileManager.default
+    _ = try validates(journal.entries)
     for entry in journal.entries.reversed() {
-      let root = try validate(entry)
+      let root = URL(fileURLWithPath: entry.root)
       let original = try PathPolicy.mutationPath(entry.source, under: root)
       let recycled = try PathPolicy.mutationPath(entry.destination, under: root)
       if !fm.fileExists(atPath: recycled.path) { continue }
       guard !fm.fileExists(atPath: original.path) else { throw StorageError.collision }
-      guard try FileInventory.digest(recycled, checkCancellation: false) == entry.digest else {
+      guard try verifies(entry, at: recycled, published: true, cancellable: false) else {
         throw StorageError.verificationFailed
       }
-      try fm.createDirectory(
-        at: original.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try fm.moveItem(at: recycled, to: original)
+      try move(entry, from: recycled, to: original)
     }
     var complete = journal
     complete.phase = "rolledBack"
@@ -615,12 +665,19 @@ public enum MediaLanguageChangeError: Error, LocalizedError {
 }
 
 /// One recoverable metadata commit for all language folders of a chapter.
-/// Sources stay readable until every new file has been verified and metadata commits.
+/// Copies/links retain sources until metadata commits. Opt-in same-volume renames
+/// publish directly; their persisted identity/intent allows recovery before metadata.
 public struct OrganizationFile: Codable, Sendable {
   public var source: String
   public var relativePath: String
   public var keepSource: Bool
   public var digest = ""
+  public var identity: FileIdentity? = nil
+  public var allowRename: Bool? = nil
+  /// Independent copies keep SHA verification, but source guards and later
+  /// checkpoints can use the exact object instead of re-reading its bytes.
+  public var copySourceIdentity: FileIdentity? = nil
+  public var publishedCopyIdentity: FileIdentity? = nil
   public var phase = "pending"
   public init(source: URL, relativePath: String, keepSource: Bool) {
     self.source = source.path
@@ -644,6 +701,7 @@ public struct OrganizationJournal: Codable, Sendable, Identifiable {
   public var files: [OrganizationFile]
   public var cleanupFolders: [EmptyMediaFolder]? = nil
   public var sourceBookmarks: [String: Data]? = nil
+  public var destinationFolders: [String]? = nil
   public var phase: String
 
   /// A changed revision alone is not a file conflict. Never replace newer text or tags.
@@ -798,8 +856,10 @@ public enum FileOrganization {
       from: Data(contentsOf: directory.appendingPathComponent(id + ".json")))
   }
   /// Persist a proven recovery payload before its revision-checked metadata write.
-  public static func recordRecovery(_ initial: OrganizationJournal,
-    recovered: OrganizationJournal, in directory: URL) throws -> OrganizationJournal {
+  public static func recordRecovery(
+    _ initial: OrganizationJournal,
+    recovered: OrganizationJournal, in directory: URL
+  ) throws -> OrganizationJournal {
     var stored = try read(initial.id, in: directory)
     let encoder = JSONEncoder()
     encoder.outputFormatting = .sortedKeys
@@ -819,7 +879,8 @@ public enum FileOrganization {
     entityId: String, revision: Int, metadata: MetadataInput,
     libraryId: String, rootId: String, root: URL, sourceRootIds: [String],
     files: [OrganizationFile], directory: URL, cleanupFolders: [EmptyMediaFolder] = [],
-    sourceBookmarks: [String: Data] = [:], originalMetadata: MetadataInput? = nil
+    sourceBookmarks: [String: Data] = [:], originalMetadata: MetadataInput? = nil,
+    preferLinks: Bool = true, allowRename: Bool = false, destinationFolders: [String] = []
   ) throws -> OrganizationJournal {
     try JSONDecoder().decode(
       LibraryDestinationIdentity.self,
@@ -828,28 +889,67 @@ public enum FileOrganization {
     .validate(libraryId: libraryId, destinationId: rootId)
     var files = files
     var destinations = Set<String>()
+    let device = try FileIdentity.device(at: root)
     for index in files.indices {
+      try Task.checkCancellation()
+      files[index].identity = nil
+      files[index].allowRename = nil
       let target = try PathPolicy.mutationPath(files[index].relativePath, under: root)
       guard destinations.insert(target.path.lowercased()).inserted,
         !FileManager.default.fileExists(atPath: target.path)
       else { throw StorageError.collision }
-      let inventory = try FileInventory.read(URL(fileURLWithPath: files[index].source))
-      guard !inventory.directory, let digest = inventory.entries.first?.digest else {
-        throw StorageError.unsupportedMove
+      let source = URL(fileURLWithPath: files[index].source)
+      if preferLinks, !files[index].keepSource, let identity = try? FileIdentity.read(source),
+        identity.device == device
+      {
+        files[index].identity = identity
+        files[index].allowRename = allowRename && originalMetadata != nil
+        continue
       }
-      files[index].digest = digest
+      let fingerprint = try copyFingerprint(source)
+      files[index].copySourceIdentity = fingerprint.identity
+      files[index].digest = fingerprint.digest
     }
-    let journal = OrganizationJournal(
+    for path in destinationFolders { _ = try PathPolicy.mutationPath(path, under: root) }
+    var journal = OrganizationJournal(
       id: UUID().uuidString, libraryId: libraryId,
       entityId: entityId, revision: revision, rootId: rootId, root: root.path,
       sourceRootIds: sourceRootIds, metadata: metadata, originalMetadata: originalMetadata,
-      files: files, cleanupFolders: cleanupFolders, sourceBookmarks: sourceBookmarks, phase: "prepared")
+      files: files, cleanupFolders: cleanupFolders, sourceBookmarks: sourceBookmarks,
+      phase: "prepared")
+    journal.destinationFolders = destinationFolders
     try save(journal, in: directory)
     return journal
   }
+  /// SMB servers can advance mtime when a read flushes a recently written file.
+  /// Require two matching byte inventories in that case, rather than rejecting
+  /// unchanged content or trusting a timestamp-only refresh for an independent copy.
+  static func copyFingerprint(_ source: URL,
+    inventory: (URL) throws -> FileInventory = { try FileInventory.read($0) }
+  ) throws -> (digest: String, identity: FileIdentity?) {
+    let before = try? FileIdentity.read(source)
+    let contents = try inventory(source)
+    guard !contents.directory, let digest = contents.entries.first?.digest else {
+      throw StorageError.unsupportedMove
+    }
+    var after = try? FileIdentity.read(source)
+    if let before, after != before {
+      guard let changed = after, changed.device == before.device,
+        changed.inode == before.inode, changed.size == before.size,
+        try inventory(source) == contents
+      else { throw StorageError.verificationFailed }
+      after = try? FileIdentity.read(source)
+      guard let final = after, final.device == before.device,
+        final.inode == before.inode, final.size == before.size
+      else { throw StorageError.verificationFailed }
+    }
+    return (digest, after)
+  }
+
   public static func stage(
     _ initial: OrganizationJournal, in directory: URL,
-    progress: @Sendable (Double) -> Void = { _ in }
+    progress: @Sendable (Double) -> Void = { _ in },
+    link: @Sendable (URL, URL) throws -> Void = { try FileManager.default.linkItem(at: $0, to: $1) }
   ) throws -> OrganizationJournal {
     var journal = try read(initial.id, in: directory)
     guard ["prepared", "copying", "filesReady_metadataPending"].contains(journal.phase) else {
@@ -862,23 +962,55 @@ public enum FileOrganization {
     )
     .validate(libraryId: journal.libraryId, destinationId: journal.rootId)
     journal.phase = "copying"
+    // Persist publication intent for fast entries together. Each target must
+    // still be absent before its first attempt; resume verifies its exact inode.
+    for index in journal.files.indices
+    where journal.files[index].identity != nil
+      && journal.files[index].phase == "pending"
+    {
+      let target = try PathPolicy.mutationPath(journal.files[index].relativePath, under: root)
+      guard !FileManager.default.fileExists(atPath: target.path) else {
+        throw StorageError.collision
+      }
+      journal.files[index].phase = "copying"
+    }
     try save(journal, in: directory)
+    var linksUnsupported = false
+    for path in journal.destinationFolders ?? [] {
+      try FileManager.default.createDirectory(
+        at: PathPolicy.mutationPath(path, under: root),
+        withIntermediateDirectories: true)
+    }
     for index in journal.files.indices {
       try Task.checkCancellation()
-      let entry = journal.files[index]
+      var entry = journal.files[index]
       let source = URL(fileURLWithPath: entry.source)
       let target = try PathPolicy.mutationPath(entry.relativePath, under: root)
       if FileManager.default.fileExists(atPath: target.path) {
         // Only a file which this journal began publishing can be resumed.
-        guard entry.phase != "pending", try FileInventory.digest(target) == entry.digest else {
+        guard entry.phase != "pending", try verifies(entry, at: target) else {
           throw StorageError.collision
         }
       } else {
-        guard try FileInventory.read(source).entries.first?.digest == entry.digest else {
-          throw StorageError.verificationFailed
+        if entry.allowRename == true, let identity = entry.identity {
+          let current = try FileIdentity.read(source)
+          guard current.device == identity.device, current.inode == identity.inode,
+            current.size == identity.size
+          else { throw StorageError.verificationFailed }
+          // A move preserves the current file object. Some NAS access/metadata
+          // operations advance mtime without replacing it; freeze its current
+          // timestamp only when staging starts, then verify published identities strictly.
+          if current != identity {
+            entry.identity = current
+            journal.files[index] = entry
+            try save(journal, in: directory)
+          }
+        } else {
+          guard try verifiesSource(entry, at: source) else { throw StorageError.verificationFailed }
         }
-        journal.files[index].phase = "copying"
-        try save(journal, in: directory)
+        // A missing published copy may be recreated only from the unchanged
+        // source. Its new temporary file must still pass the stored SHA.
+        entry.publishedCopyIdentity = nil
         try FileManager.default.createDirectory(
           at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
         let temporary = target.deletingLastPathComponent().appendingPathComponent(
@@ -887,24 +1019,80 @@ public enum FileOrganization {
           try FileManager.default.removeItem(at: temporary)
         }
         do {
-          try FileManager.default.copyItem(at: source, to: temporary)
-          guard try FileInventory.digest(temporary) == entry.digest,
-            try FileInventory.digest(source) == entry.digest
+          if entry.identity != nil {
+            do {
+              if linksUnsupported { throw StorageError.unsupportedMove }
+              try link(source, temporary)
+            } catch {
+              // Some SMB servers/filesystems do not implement hard links.
+              // Only explicit plans with an original snapshot may rename.
+              // Other callers retain the existing verified-copy behavior.
+              try Task.checkCancellation()
+              if FileManager.default.fileExists(atPath: temporary.path) { throw error }
+              linksUnsupported = true
+              if entry.allowRename == true {
+                // Intent was saved before any source changes. An interrupted
+                // metadata write is resumed from the published exact inode.
+                try FileIdentity.renameExclusively(source, to: target)
+                let published = try FileIdentity.read(target)
+                guard let original = entry.identity, published.device == original.device,
+                  published.size == original.size
+                else { throw StorageError.verificationFailed }
+                // SMB may change inodes and timestamps during rename. The successful rename preserves the bytes;
+                // persist its published identity immediately for later recovery.
+                entry.identity = published
+                journal.files[index] = entry
+                journal.files[index].phase = "copied"
+                try save(journal, in: directory)
+                progress(Double(index + 1) / Double(max(1, journal.files.count)))
+                continue
+              }
+              entry.identity = nil
+              let fingerprint = try copyFingerprint(source)
+              entry.copySourceIdentity = fingerprint.identity
+              entry.digest = fingerprint.digest
+              journal.files[index] = entry
+              try save(journal, in: directory)
+            }
+          }
+          if entry.identity == nil {
+            entry.phase = "copying"
+            journal.files[index] = entry
+            try save(journal, in: directory)
+            try FileManager.default.copyItem(at: source, to: temporary)
+          }
+          guard try verifies(entry, at: temporary), try verifiesSource(entry, at: source)
           else { throw StorageError.verificationFailed }
           try Task.checkCancellation()
           try FileManager.default.moveItem(at: temporary, to: target)
+          if entry.identity == nil { entry.publishedCopyIdentity = try? FileIdentity.read(target) }
         } catch {
           try? FileManager.default.removeItem(at: temporary)
           throw error
         }
       }
-      journal.files[index].phase = "copied"
-      try save(journal, in: directory)
+      entry.phase = "copied"
+      journal.files[index] = entry
+      if entry.identity == nil || index % 32 == 31 { try save(journal, in: directory) }
       progress(Double(index + 1) / Double(max(1, journal.files.count)))
     }
     journal.phase = "filesReady_metadataPending"
     try save(journal, in: directory)
     return journal
+  }
+  private static func verifiesSource(_ entry: OrganizationFile, at url: URL) throws -> Bool {
+    if let identity = entry.copySourceIdentity,
+      (try? FileIdentity.read(url)) == identity { return true }
+    if let identity = entry.identity { return try FileIdentity.read(url) == identity }
+    guard !entry.digest.isEmpty else { return false }
+    return try FileInventory.digest(url) == entry.digest
+  }
+  private static func verifies(_ entry: OrganizationFile, at url: URL) throws -> Bool {
+    if let published = entry.publishedCopyIdentity,
+      (try? FileIdentity.read(url)) == published { return true }
+    if let identity = entry.identity { return try FileIdentity.read(url) == identity }
+    guard !entry.digest.isEmpty else { return false }
+    return try FileInventory.digest(url) == entry.digest
   }
   /// Call only after the chapter's metadata has been confirmed committed.
   public static func finish(_ initial: OrganizationJournal, in directory: URL) throws {
@@ -921,12 +1109,11 @@ public enum FileOrganization {
     .validate(libraryId: journal.libraryId, destinationId: journal.rootId)
     for entry in journal.files {
       guard
-        try FileInventory.digest(PathPolicy.mutationPath(entry.relativePath, under: root))
-          == entry.digest
+        try verifies(entry, at: PathPolicy.mutationPath(entry.relativePath, under: root))
       else { throw StorageError.verificationFailed }
       let source = URL(fileURLWithPath: entry.source)
       if !entry.keepSource, FileManager.default.fileExists(atPath: source.path) {
-        guard try FileInventory.read(source).entries.first?.digest == entry.digest else {
+        guard try verifiesSource(entry, at: source) else {
           throw StorageError.verificationFailed
         }
       }

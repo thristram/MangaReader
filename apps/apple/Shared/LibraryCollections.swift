@@ -57,48 +57,39 @@ struct ComicTile: View {
   @EnvironmentObject private var library: LibraryUIModel
   @EnvironmentObject private var session: AppSession
   var body: some View {
-    openControl {
-      VStack(alignment: .leading, spacing: 9) {
-        MangaCover(entity: entity).aspectRatio(0.72, contentMode: .fit).clipShape(
-          RoundedRectangle(cornerRadius: 10))
-        Text(library.title(entity)).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
-          .lineLimit(2, reservesSpace: true).frame(maxWidth: .infinity, alignment: .leading)
-          .padding(.trailing, library.canManage ? 26 : 0)
-        Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-        if let progress = library.state(entity.id)?.progress {
-          let total = entity.media.first { $0.id == progress.mediaId }?.pageCount ?? 1
-          ProgressView(
-            value: progress.completed ? 1 : Double(progress.pageIndex + 1) / Double(max(1, total))
-          ).tint(.pink)
-          Text(progress.completed ? "Read" : "Page \(progress.pageIndex + 1) of \(total)").font(
-            .caption2
-          ).foregroundStyle(.secondary)
-        }
-      }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-    }
-    .accessibilityLabel(library.title(entity))
-    // Controls are siblings of the open action, never nested buttons/links.
-    // Only the buttons intercept input; transparent layout space passes through.
-    .overlay(alignment: .topTrailing) {
-      GeometryReader { geometry in
-        VStack(spacing: 9) {
-          Color.clear.frame(height: geometry.size.width / 0.72).allowsHitTesting(false)
-            .overlay(alignment: .topTrailing) {
-              ComicDownloadButton(entity: entity).padding(10)
-            }
+    VStack(alignment: .leading, spacing: 9) {
+      openControl {
+        VStack(alignment: .leading, spacing: 7) {
+          MangaCover(entity: entity).aspectRatio(0.72, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+          Text(library.title(entity)).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+            .lineLimit(2, reservesSpace: true).frame(maxWidth: .infinity, alignment: .leading)
+          Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+      }
+      .accessibilityLabel(library.title(entity))
+      // The cover overlay and action row are siblings of the navigation control.
+      .overlay(alignment: .topTrailing) { ComicDownloadButton(entity: entity).padding(10) }
+      #if os(macOS)
+        HStack(spacing: 6) {
           if library.canManage {
-            HStack {
-              Spacer(minLength: 0)
-              Button("Edit", systemImage: "pencil") { library.edit(entity) }.labelStyle(.iconOnly)
-                .buttonStyle(.plain).foregroundStyle(.secondary).frame(
-                  width: 22, height: 18, alignment: .topTrailing
-                )
-                .help("Edit " + library.title(entity)).accessibilityLabel(
-                  "Edit " + library.title(entity))
-            }
+            Button("Edit", systemImage: "pencil") { library.edit(entity) }
+              .help("Edit " + library.title(entity)).accessibilityLabel("Edit " + library.title(entity))
+          }
+          if entity.kind == .chapter {
+            NavigationLink(value: LibraryRoute.pages(entity.id)) {
+              Label("All Pages", systemImage: "square.grid.2x2")
+            }.accessibilityLabel("All Pages · " + library.title(entity))
           }
           Spacer(minLength: 0)
-        }
+        }.buttonStyle(.bordered).controlSize(.small).font(.caption).tint(.pink)
+      #endif
+      if let progress = library.state(entity.id)?.progress {
+        let total = entity.media.first { $0.id == progress.mediaId }?.pageCount ?? 1
+        ProgressView(value: progress.completed ? 1 : Double(progress.pageIndex + 1) / Double(max(1, total)))
+          .tint(.pink)
+        Text(progress.completed ? "Read" : "Page \(progress.pageIndex + 1) of \(total)")
+          .font(.caption2).foregroundStyle(.secondary)
       }
     }
     .contextMenu {
@@ -164,46 +155,89 @@ struct ComicGrid: View {
     #endif
   }
 }
-struct CollectionFilters: View {
-  let page: LibraryPage
+/// Shared native menu content for library filters and chapter collections.
+struct CollectionSortOptions: View {
+  @EnvironmentObject private var library: LibraryUIModel
+  var body: some View {
+    Picker("Sort by", selection: $library.sort) {
+      ForEach(LibrarySort.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+    }
+    Divider()
+    Picker("Order", selection: $library.sortAscending) {
+      Label("Ascending", systemImage: "arrow.up").tag(true)
+      Label("Descending", systemImage: "arrow.down").tag(false)
+    }
+  }
+}
+/// Shared compact filter layout, also used inside the iPhone Saved switch popover.
+struct CollectionFilterPanel<Header: View>: View {
+  @ViewBuilder var header: () -> Header
   @EnvironmentObject private var library: LibraryUIModel
   @EnvironmentObject private var session: AppSession
   var body: some View {
-    VStack(alignment: .leading, spacing: 14) {
-      HStack {
-        Text("\(library.collection(page).count) items").font(.callout).foregroundStyle(.secondary)
-        #if os(macOS)
-        Spacer()
-        Menu {
-          Picker("Sort by", selection: $library.sort) {
-            ForEach(LibrarySort.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-          }
-          Toggle("Unread only", isOn: $library.unreadOnly)
-        } label: {
-          Label(library.sort.rawValue, systemImage: "line.3.horizontal.decrease")
-        }.menuStyle(.borderlessButton)
-        #endif
+    VStack(alignment: .leading, spacing: 0) {
+      header()
+      Text("Filters").font(.caption).foregroundStyle(.secondary)
+        .padding(.horizontal, 8).padding(.vertical, 4)
+      filterRow("All Items", symbol: "square.grid.2x2",
+        selected: !library.unreadOnly && library.selectedTag == nil) {
+        library.unreadOnly = false; library.selectedTag = nil
       }
-      #if os(macOS)
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 8) {
-          Button("All") {
-            library.selectedTag = nil
-            library.unreadOnly = false
-          }.buttonStyle(.bordered).tint(
-            library.selectedTag == nil && !library.unreadOnly ? .pink : .secondary)
-          Button("Unread") { library.unreadOnly.toggle() }.buttonStyle(.bordered).tint(
-            library.unreadOnly ? .pink : .secondary)
-          ForEach(session.visibleEntities(kind: .tag)) { tag in
-            Button(library.title(tag)) {
-              library.selectedTag = library.selectedTag == tag.id ? nil : tag.id
-            }
-            .buttonStyle(.bordered).tint(library.selectedTag == tag.id ? .pink : .secondary)
-          }
-        }.controlSize(.small)
+      filterRow("Unread", symbol: "book.closed", selected: library.unreadOnly) {
+        library.unreadOnly.toggle()
       }
-      #endif
-    }
+      Menu {
+        Picker("Tag", selection: $library.selectedTag) {
+          Text("All Tags").tag(String?.none)
+          ForEach(session.visibleEntities(kind: .tag)) { Text(library.title($0)).tag(Optional($0.id)) }
+        }
+      } label: {
+        row(library.selectedTag.flatMap { library.entity($0).map(library.title) } ?? "Tags",
+          symbol: "tag", selected: library.selectedTag != nil, disclosure: true)
+      }.buttonStyle(.plain).accessibilityLabel("Filter by tag")
+      Divider().padding(.vertical, 8)
+      Menu { CollectionSortOptions() } label: {
+        row(library.sort.rawValue, symbol: "arrow.up.arrow.down", selected: false, disclosure: true)
+      }.buttonStyle(.plain).accessibilityLabel("Sort by " + library.sort.rawValue)
+    }.padding(12).frame(width: 310)
+  }
+  private func filterRow(_ title: String, symbol: String, selected: Bool,
+    action: @escaping () -> Void) -> some View {
+    Button(action: action) { row(title, symbol: symbol, selected: selected) }
+      .buttonStyle(.plain).accessibilityAddTraits(selected ? [.isSelected] : [])
+  }
+  private func row(_ title: String, symbol: String, selected: Bool, disclosure: Bool = false) -> some View {
+    HStack(spacing: 12) {
+      Image(systemName: "checkmark").font(.subheadline.weight(.semibold))
+        .opacity(selected ? 1 : 0).frame(width: 18).accessibilityHidden(true)
+      Image(systemName: symbol).frame(width: 24).accessibilityHidden(true)
+      Text(title).lineLimit(1)
+      Spacer(minLength: 0)
+      if disclosure { Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) }
+    }.frame(minHeight: 44).contentShape(Rectangle())
+  }
+}
+#if os(macOS)
+struct MacCollectionFilterButton: View {
+  @State private var presented = false
+  var body: some View {
+    Button { presented.toggle() } label: {
+      Image(systemName: "line.3.horizontal.decrease").font(.system(size: 16))
+        .frame(width: 32, height: 32).contentShape(Circle())
+        .glassEffect(.regular.interactive(), in: Circle())
+    }.buttonStyle(.plain)
+    .accessibilityLabel("Filter and Sort").accessibilityIdentifier("collection-filter")
+    .help("Filter and sort your library")
+    .popover(isPresented: $presented, arrowEdge: .bottom) { CollectionFilterPanel { EmptyView() } }
+  }
+}
+#endif
+struct CollectionFilters: View {
+  let page: LibraryPage
+  @EnvironmentObject private var library: LibraryUIModel
+  var body: some View {
+    Text("\(library.collection(page).count) items").font(.callout).foregroundStyle(.secondary)
+      .frame(maxWidth: .infinity, alignment: .leading)
   }
 }
 struct ComicCollectionScreen: View {
@@ -222,12 +256,6 @@ struct ComicCollectionScreen: View {
       }.padding(contentPadding)
     }
     .refreshable { try? await session.synchronize() }
-    #if os(iOS)
-      .toolbar {
-        ToolbarItem(placement: .topBarTrailing) { PhoneCollectionFilterButton() }
-          .sharedBackgroundVisibility(.hidden)
-      }
-    #endif
     .overlay(alignment: .bottom) {
       if library.opening {
         Label {
@@ -300,8 +328,11 @@ struct EntityCollectionScreen: View {
               TranslateButton(entity: entity, field: "title")
             }
           }
-          if let author = library.entity(entity.authorId) {
-            Text(library.title(author)).foregroundStyle(.secondary)
+          if let author = library.author(for: entity) {
+            HStack(alignment: .center, spacing: 12) {
+              Text(library.title(author)).foregroundStyle(.secondary)
+              SourceLinksView(links: author.sources, author: true, compact: true)
+            }.accessibilityIdentifier("comic-author-links")
           }
           HStack(spacing: 14) {
             if let chapter = library.chapters(entity).first {
@@ -370,6 +401,10 @@ struct EntityCollectionScreen: View {
     }.navigationTitle(library.title(entity))
       #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+          ToolbarItem(placement: .topBarTrailing) { PhoneCollectionFilterButton() }
+            .sharedBackgroundVisibility(.hidden)
+        }
       #endif
   }
 }
@@ -426,6 +461,9 @@ struct AuthorsScreen: View {
                 }
               }
             }
+          SourceLinksView(links: author.sources, author: true, compact: true)
+            .padding(.leading, 44).padding(.bottom, author.sources.isEmpty ? 0 : 14)
+            .accessibilityIdentifier("author-links-" + author.id)
           if expanded.contains(author.id) {
             let comics = library.authorPreviews(author)
             if comics.isEmpty {
@@ -612,9 +650,7 @@ struct SavedPagesScreen: View {
   @EnvironmentObject private var library: LibraryUIModel
   @EnvironmentObject private var session: AppSession
   var body: some View {
-    let bookmarks = session.states.filter {
-      $0.pageIndex != nil && ($0.favorite || $0.starred) && library.entity($0.entityId) != nil
-    }
+    let bookmarks = library.savedPages()
     ScrollView {
       SavedPageGrid(bookmarks: bookmarks).padding(contentPadding)
     }
@@ -736,40 +772,46 @@ struct StatisticsScreen: View {
 struct SourceLinksView: View {
   let links: [SourceLink]
   var author = false
-  var body: some View {
-    if !links.isEmpty {
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 12) {
-          ForEach(Array(links.enumerated()), id: \.offset) { _, link in
-            if let url = sourceURL(link) {
-              Link(link.site.capitalized, destination: url).font(.callout)
-            }
-          }
-        }
-      }
+  var compact = false
+  private struct Destination: Identifiable {
+    let id: Int
+    let link: SourceLink
+    let url: URL
+  }
+  private var destinations: [Destination] {
+    links.enumerated().compactMap { index, link in
+      guard let url = link.destinationURL(author: author) else { return nil }
+      return Destination(id: index, link: link, url: url)
     }
   }
-  private func sourceURL(_ link: SourceLink) -> URL? {
-    if link.value.hasPrefix("https://") { return URL(string: link.value) }
-    let escaped = link.value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
-    switch link.site {
-    case "pixiv":
-      return URL(string: "https://www.pixiv.net/" + (author ? "users/" : "artworks/") + escaped)
-    case "fanbox":
-      if author {
-        guard link.value.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil else {
-          return nil
+  var body: some View {
+    if !destinations.isEmpty {
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: compact ? 10 : 12) {
+          ForEach(destinations) { item in sourceLink(item) }
         }
-        return URL(string: "https://" + link.value + ".fanbox.cc")
-      }
-      return URL(string: "https://www.fanbox.cc/posts/" + escaped)
-    case "patreon": return URL(string: "https://www.patreon.com/" + escaped)
-    case "ehentai": return URL(string: "https://e-hentai.org/g/" + escaped)
-    default: return nil
+      }.fixedSize(horizontal: false, vertical: true)
     }
+  }
+  private func sourceLink(_ item: Destination) -> some View {
+    let action = "Open " + item.link.displayName + (author ? " author profile" : " source")
+    let identifier = ["source-link", author ? "author" : "comic", item.link.site, String(item.id)].joined(separator: "-")
+    return Link(destination: item.url) { linkLabel(item.link) }
+      .buttonStyle(.borderless).help(action).accessibilityLabel(action)
+      .accessibilityIdentifier(identifier)
+  }
+  private func linkLabel(_ link: SourceLink) -> some View {
+    HStack(spacing: 4) {
+      Text(link.displayName)
+      if compact { Image(systemName: "arrow.up.right").font(.caption2) }
+    }.font(compact ? Font.caption : Font.callout)
+      #if os(iOS)
+        .frame(minHeight: 44)
+      #else
+        .padding(.vertical, compact ? 5 : 0)
+      #endif
   }
 }
-
 struct ComicDownloadButton: View {
   let entity: LibraryEntity
   @EnvironmentObject private var library: LibraryUIModel

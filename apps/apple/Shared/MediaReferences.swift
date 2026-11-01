@@ -169,14 +169,30 @@ struct ReferencedFoldersView: View {
 }
 
 struct ReaderFileInfo: View {
+  let chapter: LibraryEntity
   let media: MediaVersion
   let page: Int
   @EnvironmentObject private var library: LibraryUIModel
+  @EnvironmentObject private var session: AppSession
   @Environment(\.dismiss) private var dismiss
   @State private var reference: MediaStorageReference?
   var body: some View {
     NavigationStack {
       Form {
+        Section("Author") {
+          if let current = session.catalog.entity(chapter.id, showNSFW: AppConfiguration.showNSFW),
+            let author = library.author(for: current) {
+            VStack(alignment: .leading, spacing: 10) {
+              Label(library.title(author), systemImage: "person.crop.circle")
+                .font(.headline).accessibilityIdentifier("reader-info-author")
+              if !author.description(in: AppConfiguration.preferredLanguage).isEmpty {
+                Text(author.description(in: AppConfiguration.preferredLanguage))
+                  .foregroundStyle(.secondary).textSelection(.enabled)
+              }
+              SourceLinksView(links: author.sources, author: true, compact: true)
+            }
+          } else { Text("other author").foregroundStyle(.secondary) }
+        }
         Section("File Location") {
           if let reference { StorageReferenceDetails(reference: reference) }
           else { ProgressView("Loading file information…") }

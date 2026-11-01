@@ -43,7 +43,7 @@ No `.env` is read by an Apple application. `Service.xcconfig` and client IDs are
 - Save Connection first checks network access with Network.framework, allowing the system's local-network authorization flow to complete. Permit access when iOS asks. iPhone verifies an existing Mac-initialized library and never offers destination initialization. Errors identify the network, SMB session, folder, library validation or Keychain stage. See [SMB troubleshooting](smb-connection-diagnostics-2026-10-14.md).
 - Reading/downloading stages preferred chapter media into private storage before opening; author/series/work Download All walks visible chapters. This is a foreground sequential transfer, without background resume or streaming.
 - Reader hides tabs and uses native page-style TabView transitions for images/PDF, UIScrollView image pinch/double-tap zoom, PDFView, and AVKit VideoPlayer. The top-right language menu preserves canonical alignment; missing media and missing text have independent fallbacks. Codec failures are explicit.
-- First-open/login requires online account verification. An already verified session can read completed downloads without the NAS. Completely offline relaunch and a durable offline state outbox remain pending.
+- First-open/login requires online account verification. An already verified session can read completed downloads without the NAS. Completely offline relaunch remains pending. Latest pending reading-state intentions now survive restart in the owner-local outbox.
 
 ## Cache and recovery
 
@@ -127,3 +127,45 @@ The October 16 update in that record also documents three authorized iPhone cras
 
 - [Chapter media editing: version/chapter folder deletion and adding images](chapter-media-editing-2026-10-17.md)
 - [Manga image translation setup, defaults, queue, previews and recovery](manga-image-translation-2026-10-18.md)
+- [Chapter description scrolling and text size](chapter-description-reading-2026-10-29.md)
+- [Ollama title/description translation and missing-model diagnostics](ollama-text-translation-2026-10-30.md)
+
+## Chapter reassignment and organization
+
+Edit Chapter can reassign a chapter to another comic and inherit its author/Series.
+Same-volume translation and other organization commits now avoid copying exclusive
+media bytes; unchanged pages skip filesystem work. See [usage, recovery and
+verification](chapter-reassignment-and-organization-2026-10-22.md).
+
+## Author source links
+
+Both apps offer direct author links in Preview Info, beside the comic author and
+on each Authors row. Sources come from synced author metadata; configure them in
+Edit Author on Mac. See [usage and validation](author-source-links-2026-10-22.md).
+
+Collection ordering: All Comics and the comic's chapter grid expose **Update Time / Title / Author** plus **Ascending / Descending**. On iPhone, open the circular filter for All Comics; comic detail uses the same circular filter in the navigation bar. Mac editing keeps Delete on the left of the bottom action bar, with Translate Manga immediately after it for chapters. See [collection sorting and editor actions](spec.md#collection-sorting-and-editor-actions).
+
+Mac **Import & Identify → Additional Pages** and **chapter tile → All Pages → Add Images…** share a destination/language commit review. All Pages is now a regular navigation page; its thumbnails open the reader. See [import modes and collection controls](spec.md#import-modes-all-pages-navigation-and-unified-filters).
+
+
+Commit performance also covers Additional Pages, translations, language corrections
+and deletion into Recycle. Independent copies avoid repeated unchanged-byte reads;
+new same-volume Recycle operations avoid media hashing. Old journals remain
+recoverable. Import labels are on the left of the aligned textboxes. See
+[commit execution and compatibility](../adr/0017-same-volume-organization.md).
+
+
+## Refresh and small updates
+
+Mac no longer polls the full library every 30 seconds. It checks on launch, after
+metadata edits (coalesced), once after ten minutes without interaction, on return
+from a long idle period, or through the existing Sync control. iPhone checks on
+foreground and every two minutes while active. A revision manifest/304 avoids
+redownloading unchanged records; state-only changes do not download chapter paths.
+
+Reading progress merges for five seconds; leaving Preview or going inactive flushes
+it. Pending state survives restart and is sent after verifying the same account.
+Favorites/stars remain prompt. Metadata editing and progressive image translation
+send only modified fields/pages. New clients retain a legacy-server fallback during
+rolling upgrades; deploy the new server to obtain the reduction. See
+[protocol and recovery](../adr/0018-demand-driven-sync-and-small-mutations.md).
