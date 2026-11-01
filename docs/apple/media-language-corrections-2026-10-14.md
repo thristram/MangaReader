@@ -27,15 +27,17 @@ Its commit changes only the media language and preserves existing paths.
 - File operations require a connected, verified local archive root, including a
   Finder-mounted NAS. Multi-version media must already have one language directory
   for the selected version; unorganized paths need organization first.
-- The whole language directory is copied and verified before saving metadata.
-  Originals remain readable until the API confirms the update. Cleanup then
-  removes the old directory, unless another chapter/version still references it.
+- The common organization executor preserves the folder's media, sidecars and
+  nested/empty directories. Exclusive same-volume files use links or journaled
+  rename; shared/cross-volume files remain verified copies. A renamed file is at
+  its recorded target before metadata saving. Cleanup removes only empty old
+  directories after the API confirms the update. See [the 2026-10-22 update](chapter-reassignment-and-organization-2026-10-22.md).
 - Failures after file staging retain the existing commit journal and desired
   metadata. Close the sheet and use **Pending Organization → Review & Recover**
   to reconcile the revision and finish verified cleanup. Repeated Commit is
   disabled after a failure that may require recovery.
 
-This uses the existing entity update API and journal format. No server migration,
+This uses the existing entity update API and backward-compatible optional journal fields. No server migration,
 new environment variable or service deployment is required. iPhone retains its
 reader role and has no file-language editing controls.
 

@@ -4,6 +4,21 @@ import XCTest
 @testable import MangaCore
 
 final class StorageWorkflowTests: XCTestCase {
+  func testImportScannerAcceptsStandaloneImagesWithoutScanningSiblings() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let selected = directory.appendingPathComponent("new-page.PNG")
+    let sibling = directory.appendingPathComponent("unselected.png")
+    try Data("selected".utf8).write(to: selected)
+    try Data("unselected".utf8).write(to: sibling)
+    let candidates = try ImportScanner.scan(selected)
+    XCTAssertEqual(candidates.count, 1)
+    XCTAssertEqual(candidates.first?.kind, "images")
+    XCTAssertEqual(candidates.first?.source, selected)
+    XCTAssertEqual(candidates.first?.pages, [selected])
+  }
+
   func testStaleTranslationPlanPreservesPriorSuccessAndPersistsRebase() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -516,7 +531,7 @@ final class StorageWorkflowTests: XCTestCase {
       files: [
         OrganizationFile(source: first, relativePath: "Chapter/ja/1.png", keepSource: true),
         OrganizationFile(source: second, relativePath: "Chapter/en/1.png", keepSource: false),
-      ], directory: journals)
+      ], directory: journals, preferLinks: false)
     try Data("edited".utf8).write(to: second)
     XCTAssertThrowsError(try FileOrganization.stage(plan, in: journals))
     XCTAssertTrue(FileManager.default.fileExists(atPath: first.path))

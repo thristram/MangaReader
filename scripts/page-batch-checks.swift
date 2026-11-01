@@ -123,6 +123,60 @@ import SwiftUI
     try check(fm.fileExists(atPath: reimportedURL.path), "re-import did not recreate chapter directory")
     replacementImport.close()
 
+    // Import & Identify's third mode must use exactly the same append/commit path.
+    let importTarget = session.entities.first { $0.id == "c4-1" }!
+    let extraFolder = incoming.appendingPathComponent("Additional Pages")
+    try fm.createDirectory(at: extraFolder, withIntermediateDirectories: true)
+    for name in ["10.png", "2.png"] { try bytes[0].write(to: extraFolder.appendingPathComponent(name)) }
+    let additional = ImportWorkspaceModel(library: library)
+    additional.append([extraFolder])
+    additional.mode = .additionalPages
+    try check(!additional.canSubmit, "Additional Pages accepted an unspecified chapter")
+    additional.translationOf = importTarget.id
+    additional.input.originalLanguage = "ja"
+    try check(additional.canSubmit, "Additional Pages cannot select an existing chapter")
+    let candidateId = additional.current!.id
+    let importAddRequest = try additional.additionalImagesRequest()
+    try check(importAddRequest.files.map { $0.url.lastPathComponent } == ["2.png", "10.png"],
+      "Additional Pages lost natural filename ordering")
+    try check(library.entity(importTarget.id)?.revision == importTarget.revision,
+      "opening additional-page review changed metadata before Commit")
+    let appended = try await library.commitAddedImages(importAddRequest, language: "ja", destinationId: root.id)
+    try check(appended.media.first { $0.language == "ja" }!.pageCount == importTarget.media[0].pageCount + 2,
+      "Additional Pages created a new chapter instead of appending")
+    try check(appended.title == importTarget.title && appended.description == importTarget.description
+      && appended.workId == importTarget.workId, "additional import overwrote chapter metadata")
+    try check(importAddRequest.files.allSatisfy { fm.fileExists(atPath: $0.url.path) },
+      "additional import removed external source images")
+    additional.finishAdditionalPages(candidateId: candidateId)
+    try check(additional.queue.isEmpty, "successful additional import left a pending duplicate candidate")
+    additional.close()
+
+    // Single-image drops/pickers own the file grant, never its entire parent folder.
+    let single = incoming.appendingPathComponent("Single Image.png")
+    let neighbor = incoming.appendingPathComponent("unselected.txt")
+    try bytes[0].write(to: single); try Data("unselected".utf8).write(to: neighbor)
+    let singleImport = ImportWorkspaceModel(library: library)
+    singleImport.append([single])
+    singleImport.mode = .additionalPages
+    singleImport.translationOf = appended.id
+    let singleRequest = try singleImport.additionalImagesRequest()
+    try check(singleRequest.files.count == 1,
+      "single-image picker/drop cannot create an additional-page request")
+    singleImport.mode = .newChapter
+    singleImport.translationOf = nil
+    singleImport.input.title = "Single Image Chapter"
+    singleImport.input.authorId = importTarget.authorId
+    singleImport.destinationId = root.id
+    await singleImport.process(move: true)?.value
+    try check(singleImport.queue.isEmpty, "single image import failed: " + singleImport.status)
+    let singleChapter = session.entities.first { $0.title == "Single Image Chapter" }!
+    let singleURL = try await library.local.url(for: singleChapter.media[0], file: 0)
+    try check(singleURL.lastPathComponent == single.lastPathComponent && fm.fileExists(atPath: singleURL.path),
+      "single-image move did not create a chapter folder containing the image")
+    try check(fm.fileExists(atPath: neighbor.path), "single-image import moved its parent folder")
+    singleImport.close()
+
     // A failed append persists picker grants and finishes from the same journal without duplicate pages.
     let appendFailure = session.entities.first { $0.id == "c3-1" }!
     let appendOriginal = try await library.local.url(for: appendFailure.media[0], file: 0)

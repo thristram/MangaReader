@@ -1,6 +1,6 @@
 # ADR 0005 — MongoDB canonical metadata and revisioned synchronization
 
-Status: Accepted · 2026-10-13
+Status: Accepted · 2026-10-13. The initial polling/snapshot decision is superseded by [ADR 0018](0018-demand-driven-sync-and-small-mutations.md); transaction-backed change streams remain future work.
 
 ## Context
 

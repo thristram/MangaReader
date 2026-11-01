@@ -27,6 +27,31 @@ public struct MediaVersion: Codable, Sendable, Identifiable {
   public var relativePaths: [String]
   public var pageCount: Int
   public var pageAlignment: [Int?]?
+  private enum CodingKeys: String, CodingKey {
+    case id, language, kind, storageRootId, relativePaths, pageCount, pageAlignment, pathDirectory, pathFiles
+  }
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    id = try c.decode(String.self, forKey: .id)
+    language = try c.decode(String.self, forKey: .language)
+    kind = try c.decode(String.self, forKey: .kind)
+    storageRootId = try c.decode(String.self, forKey: .storageRootId)
+    pageCount = try c.decode(Int.self, forKey: .pageCount)
+    pageAlignment = try c.decodeIfPresent([Int?].self, forKey: .pageAlignment)
+    if let paths = try c.decodeIfPresent([String].self, forKey: .relativePaths) { relativePaths = paths }
+    else {
+      let directory = try c.decode(String.self, forKey: .pathDirectory)
+      let files = try c.decode([String].self, forKey: .pathFiles)
+      relativePaths = files.map { directory.isEmpty ? $0 : directory + "/" + $0 }
+    }
+  }
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(id, forKey: .id); try c.encode(language, forKey: .language)
+    try c.encode(kind, forKey: .kind); try c.encode(storageRootId, forKey: .storageRootId)
+    try c.encode(relativePaths, forKey: .relativePaths); try c.encode(pageCount, forKey: .pageCount)
+    try c.encodeIfPresent(pageAlignment, forKey: .pageAlignment)
+  }
   public init(
     id: String = UUID().uuidString.lowercased(), language: String, kind: String,
     storageRootId: String, relativePaths: [String], pageCount: Int
@@ -165,6 +190,11 @@ public struct PersonalState: Codable, Sendable, Identifiable {
   public var updatedAt: String
 }
 public struct SyncSnapshot: Codable, Sendable {
+  public var remainingEntities: [String]? = nil
+  public var remainingStates: [String]? = nil
+  public init(schemaVersion: Int, entities: [LibraryEntity], states: [PersonalState]) {
+    self.schemaVersion = schemaVersion; self.entities = entities; self.states = states
+  }
   public var schemaVersion: Int
   public var entities: [LibraryEntity]
   public var states: [PersonalState]
@@ -268,4 +298,15 @@ public enum ComicDeletionPlan {
         && $0.contains("/")
     }
   }
+}
+
+public struct SyncManifest: Codable, Sendable {
+  public struct Stamp: Codable, Sendable {
+    public var id: String
+    public var revision: Int
+    public var deleted: Bool?
+  }
+  public var schemaVersion: Int
+  public var entities: [Stamp]
+  public var states: [Stamp]
 }

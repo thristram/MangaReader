@@ -20,7 +20,34 @@ import SwiftUI
   static func dropHost(in view: NSView) -> ImportDropHostingView? {
     (view as? ImportDropHostingView) ?? view.subviews.lazy.compactMap { dropHost(in: $0) }.first
   }
+  static func journalIndexChecks(_ directory: URL) async throws {
+    let folder = directory.appendingPathComponent("organization-journals")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    func write(_ name: String, phase: String, entity: String) throws {
+      let data = try JSONSerialization.data(withJSONObject: ["phase": phase, "entityId": entity,
+        "padding": String(repeating: "history", count: 1000)])
+      try data.write(to: folder.appendingPathComponent(name + ".json"), options: .atomic)
+    }
+    for index in 0..<40 { try write("history-\(index)", phase: "complete", entity: "old-\(index)") }
+    try write("pending", phase: "prepared", entity: "active")
+    let index = PendingFileJournalIndex()
+    var pending = try await index.pending(in: directory)
+    try expect(pending == ["active"], "journal index omitted pending work")
+    let first = await index.decodedRecords
+    pending = try await index.pending(in: directory)
+    let second = await index.decodedRecords
+    try expect(pending == ["active"] && second - first == 1,
+      "repeated commits decode all completed history again")
+    try write("history-0", phase: "prepared", entity: "reopened")
+    pending = try await index.pending(in: directory)
+    try expect(pending == ["active", "reopened"], "changed completed journal was hidden by its cache")
+    try write("pending", phase: "complete", entity: "active")
+    pending = try await index.pending(in: directory)
+    try expect(pending == ["reopened"], "completed pending task did not refresh")
+    print("PASS: completed journal bodies skipped on repeat; pending records and atomically replaced history always refreshed.")
+  }
   static func run(directory: URL) async throws {
+    try await journalIndexChecks(directory.appendingPathComponent("journal-index"))
     let session = NativeUIFixtures.makeSession(cacheRoot: directory.appendingPathComponent("cache"))
     let library = try NativeUIFixtures.seed(session: session, directory: directory)
     let work = session.entities.first { $0.id == "w0" }!
@@ -76,6 +103,12 @@ import SwiftUI
           && ($0.documentView?.bounds.width ?? 0) > $0.bounds.width
       })
     else { throw LoginError.server("Review, right queue or horizontal page strip did not appear") }
+    let names = Set(["Chapter name", "Search existing authors", "Search or create a comic"])
+    let alignedFields = fields(in: hosting.view).filter { names.contains($0.placeholderString ?? "") }
+    let frames = alignedFields.map { $0.convert($0.bounds, to: hosting.view) }
+    try expect(frames.count == 3 && frames.allSatisfy {
+      abs($0.minX - frames[0].minX) < 12 && abs($0.maxX - frames[0].maxX) < 12
+    }, "single-line import inputs do not share aligned column edges")
     let reviewFrame = review.convert(review.bounds, to: hosting.view)
     let queueFrame = queue.convert(queue.bounds, to: hosting.view)
     try expect(

@@ -11,12 +11,77 @@ import PDFKit
 #endif
 
 @MainActor enum NativeUIFixtures {
+  static func collectionSortingChecks(_ library: LibraryUIModel) throws {
+    let session = library.session
+    let entities = session.entities
+    let oldSort = library.sort, ascending = library.sortAscending
+    let query = library.query, tag = library.selectedTag, unread = library.unreadOnly
+    defer {
+      session.entities = entities
+      library.sort = oldSort
+      library.sortAscending = ascending
+      library.query = query; library.selectedTag = tag; library.unreadOnly = unread
+    }
+    library.query = ""; library.selectedTag = nil; library.unreadOnly = false
+    let authors = try ["Beta", "Alpha", "Gamma"].enumerated().map { index, name in
+      try record("sort-author-\(index)", .init(kind: .author, title: name), revision: 1)
+    }
+    var works: [LibraryEntity] = [], chapters: [LibraryEntity] = []
+    for index in 0..<3 {
+      let display = ["Volume 10", "Volume 2", "Volume 1"][index]
+      var work = try record("sort-work-\(index)", .init(kind: .work,
+        title: "Original \(index)", authorId: authors[index].id), revision: 1)
+      work.localizations[AppConfiguration.preferredLanguage] = LocalizedText(title: display)
+      work.updatedAt = ["2026-01-03T00:00:00Z", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"][index]
+      works.append(work)
+      var chapter = work
+      chapter.id = "sort-chapter-\(index)"; chapter.kind = .chapter
+      chapter.workId = "sort-work-0"
+      // A chapter without its own author must inherit the comic's author.
+      if index == 0 { chapter.authorId = nil }
+      chapters.append(chapter)
+    }
+    session.entities = authors + works + chapters
+    let expected: [(LibrarySort, [Int])] = [(.updated, [1, 2, 0]), (.title, [2, 1, 0]), (.author, [1, 0, 2])]
+    for (sort, order) in expected {
+      library.sort = sort
+      for ascending in [true, false] {
+        library.sortAscending = ascending
+        let indices = ascending ? order : Array(order.reversed())
+        let actualWorks = library.collection(.library).map(\.id)
+        let actualChapters = library.filtered(library.children(works[0])).map(\.id)
+        guard actualWorks == indices.map({ "sort-work-\($0)" }),
+          actualChapters == indices.map({ "sort-chapter-\($0)" }) else {
+          throw NSError(domain: "CollectionSortingChecks", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Incorrect \(sort) order, ascending=\(ascending)"])
+        }
+      }
+    }
+    var tied = works[0]; tied.id = "sort-work-tie"
+    session.entities.append(tied)
+    library.sort = .title; library.sortAscending = true
+    let forward = library.collection(.library).map(\.id)
+    library.sortAscending = false
+    guard library.collection(.library).map(\.id) == Array(forward.reversed()) else {
+      throw NSError(domain: "CollectionSortingChecks", code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "Equal sort keys must keep a deterministic ID tie break"])
+    }
+    print("PASS: library and chapter collection update/title/author sorting in both directions; localized numeric titles, inherited authors and deterministic ties.")
+  }
   static func storageReferenceChecks(_ library: LibraryUIModel) async throws {
+    try collectionSortingChecks(library)
     func check(_ value: @autoclosure () -> Bool, _ message: String) throws {
       if !value() { throw NSError(domain: "StorageReferenceChecks", code: 1,
                                   userInfo: [NSLocalizedDescriptionKey: message]) }
     }
     let chapter = library.session.entities.first { $0.id == "c0-0" }!
+    let author = library.author(for: chapter)
+    try check(author?.id == "a0" && author?.sources.count == 4,
+      "Reader Info and collection author links must resolve the chapter's author")
+    try check(author?.sources.first?.destinationURL(author: true)?.path == "/users/1000",
+      "Author links must use profile routes instead of comic routes")
+    let work = library.session.entities.first { $0.id == "w0" }!
+    try check(library.author(for: work)?.id == author?.id, "Comic and chapter author attribution differ")
     let original = chapter.media.first { $0.language == "ja" }!
     let reference = await library.fileReference(original, page: 1)!
     try check(reference.relativePath == original.relativePaths[1], "Info reports the wrong image file")
@@ -142,6 +207,12 @@ import PDFKit
           ? -1001 : failedRepliesAfterDelete.contains(id) ? 500 : 204, Data()
       )
     }
+    if request.httpMethod == "GET", request.url?.path.hasPrefix("/v1/states/") == true {
+      let parts = id.split(separator: ":", maxSplits: 1).map(String.init)
+      let page = parts.count == 2 ? Int(parts[1]) : nil
+      guard let entity = parts.first, let state = readingStates.first(where: { $0.entityId == entity && $0.pageIndex == page }) else { return (404, Data()) }
+      return (200, try JSONEncoder().encode(state))
+    }
     if request.httpMethod == "PUT", id == "states" {
       let input = try JSONDecoder().decode(StateInput.self, from: request.httpBody ?? Data())
       let old = readingStates.first {
@@ -160,6 +231,54 @@ import PDFKit
       readingStates.removeAll { $0.id == state.id }
       readingStates.append(state)
       return (200, data)
+    }
+    if request.httpMethod == "PATCH", let index = records.firstIndex(where: { $0.id == id }) {
+      guard !rejectedUpdateIds.contains(id), request.value(forHTTPHeaderField: "If-Match") == String(records[index].revision) else { return (409, Data()) }
+      let operations = try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as! [[String: Any]]
+      var document = try JSONSerialization.jsonObject(with: JSONEncoder().encode(records[index].input))
+      func edit(_ node: Any, path: ArraySlice<String>, operation: String, value: Any?) throws -> Any {
+        guard let key = path.first else { return value ?? NSNull() }
+        let rest = path.dropFirst()
+        if var object = node as? [String: Any] {
+          if rest.isEmpty {
+            switch operation {
+            case "remove": object.removeValue(forKey: key)
+            case "test": guard (object[key] as? NSObject)?.isEqual(value) == true else { throw LoginError.server("Patch test failed") }
+            default: object[key] = value
+            }
+          } else {
+            guard let child = object[key] else { throw LoginError.server("Missing patch parent") }
+            object[key] = try edit(child, path: rest, operation: operation, value: value)
+          }
+          return object
+        }
+        if var array = node as? [Any] {
+          let position = key == "-" ? array.count : Int(key) ?? -1
+          guard position >= 0 && position <= array.count else { throw LoginError.server("Invalid patch index") }
+          if rest.isEmpty {
+            switch operation {
+            case "add": array.insert(value ?? NSNull(), at: position)
+            case "remove": array.remove(at: position)
+            case "test": guard (array[position] as? NSObject)?.isEqual(value) == true else { throw LoginError.server("Patch test failed") }
+            default: array[position] = value ?? NSNull()
+            }
+          } else {
+            guard position < array.count else { throw LoginError.server("Missing patch parent") }
+            array[position] = try edit(array[position], path: rest, operation: operation, value: value)
+          }
+          return array
+        }
+        throw LoginError.server("Invalid patch parent")
+      }
+      for operation in operations {
+        let parts = (operation["path"] as! String).split(separator: "/", omittingEmptySubsequences: false).dropFirst().map { String($0).replacingOccurrences(of: "~1", with: "/").replacingOccurrences(of: "~0", with: "~") }
+        document = try edit(document, path: parts[...], operation: operation["op"] as! String, value: operation["value"])
+      }
+      let input = try JSONDecoder().decode(MetadataInput.self, from: JSONSerialization.data(withJSONObject: document))
+      if validateHierarchy && !validHierarchy(input) { return (422, Data()) }
+      records[index] = try record(id, input, revision: records[index].revision + 1)
+      return (200, try JSONSerialization.data(withJSONObject: ["id": id, "revision": records[index].revision,
+        "updatedAt": records[index].updatedAt, "title": records[index].title]))
     }
     if request.httpMethod == "PUT", let index = records.firstIndex(where: { $0.id == id }) {
       guard !rejectedUpdateIds.contains(id) else { return (409, Data()) }
@@ -230,7 +349,14 @@ import PDFKit
     try library.local.bind(root, to: media)
     let authors = ["Haruka Aoi", "Nagi Shiraishi", "Sumi Mizuno"]
     for (index, name) in authors.enumerated() {
-      session.entities.append(try entity("a\(index)", .init(kind: .author, title: name)))
+      var input = MetadataInput(kind: .author, title: name, description: "Creator of the preview collection.")
+      input.sources = [
+        .init(site: "pixiv", value: String(1000 + index)),
+        .init(site: "fanbox", value: "preview-author-" + String(index)),
+        .init(site: "patreon", value: "preview-author-" + String(index)),
+        .init(site: "ehentai", value: "https://e-hentai.org/g/12345/fixture/")
+      ]
+      session.entities.append(try entity("a\(index)", input))
     }
     for (index, name) in ["Everyday", "Warm Stories", "Fantasy", "Short Stories", "NSFW"]
       .enumerated()

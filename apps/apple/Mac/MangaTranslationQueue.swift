@@ -225,7 +225,7 @@ private actor MangaTranslationJobStore {
     let client = try MangaImageTranslationService(baseURL: job.baseURL, session: serviceSession)
     change(id) { $0.status = "running"; $0.detail = "Connecting to image translator…"; $0.error = "" }
     try await save()
-    try await client.testConnection()
+    let imageAPI = try await client.testConnection()
     for offset in job.pages.indices {
       job = try currentJob(id, token: token)
       if ["committed", "existing"].contains(job.pages[offset].status) { continue }
@@ -240,7 +240,7 @@ private actor MangaTranslationJobStore {
           let url = try await library.mediaURL(media, index: media.kind == "pdf" ? 0 : index)
           let input = try await Self.png(url: url, pdfPage: media.kind == "pdf" ? index : nil)
           _ = try currentJob(id, token: token)
-          let result = try await client.translate(image: input, options: job.options)
+          let result = try await client.translate(image: input, options: job.options, api: imageAPI)
           _ = try currentJob(id, token: token)
           _ = try source(job, page: page)
           try await FileTasks.perform {
@@ -253,6 +253,11 @@ private actor MangaTranslationJobStore {
           let resultPage = page
           change(id) { $0.pages[offset] = resultPage; $0.detail = "Organizing page \(offset + 1)…" }
           try await save()
+        } else {
+          // Older clients cached valid PNG placeholders. Do not publish one
+          // while resuming an unfinished file commit, or discard real output.
+          let cached = try await FileTasks.perform { try Data(contentsOf: output) }
+          try await MangaImageTranslationService.validateResult(cached)
         }
         _ = try currentJob(id, token: token)
         if try await recoverCommit(job: job, page: page, output: output) == false {

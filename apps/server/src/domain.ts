@@ -149,5 +149,6 @@ export function hasScope(account: Account, scope: string) {
     throw new Problem(403, "insufficient_scope", `Requires ${scope}`);
 }
 export function publicRecord({ ownerId: _owner, ...doc }: RecordDocument) {
-  return doc;
+  const { _id, ...value } = doc as typeof doc & { _id?: unknown };
+  return value;
 }

@@ -18,6 +18,10 @@ struct MangaReaderScreen: View {
   @State private var thumbnails = false
   @State private var overview = false
   @State private var chapterInfo = false
+  #if os(iOS)
+    @State private var descriptionFraction: CGFloat = 0.4
+    @GestureState private var descriptionDrag: CGFloat = 0
+  #endif
   @State private var fileInfo = false
   @State private var started = Date()
   @State private var activeSeconds = 0
@@ -72,9 +76,15 @@ struct MangaReaderScreen: View {
                 PhoneReaderPager(
                   index: $page, count: count, rightToLeft: direction == "rtl",
                   contentID: "\(version.id):\(chapter.revision)",
-                  onTap: { withAnimation { controls.toggle() } },
-                  onDismiss: { library.reader = nil },
+                  onTap: {
+                    if chapterInfo { closePhoneDescription() }
+                    else { withAnimation { controls.toggle() } }
+                  },
+                  onDismiss: {
+                    if chapterInfo { closePhoneDescription() } else { library.reader = nil }
+                  },
                   onDismissDrag: { value in
+                    guard !chapterInfo else { return }
                     if value == 0 { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { dismissOffset = 0 } }
                     else { dismissOffset = value }
                   }
@@ -101,15 +111,22 @@ struct MangaReaderScreen: View {
               .onTapGesture { withAnimation { controls.toggle() } }
             #endif
             .overlay(alignment: .top) {
-              if controls { topControls.padding(16).padding(.top, safeGeometry.safeAreaInsets.top) }
+              if readerControlsVisible { topControls.padding(16).padding(.top, safeGeometry.safeAreaInsets.top) }
             }
             .overlay(alignment: .bottom) {
-              if controls {
+              if readerControlsVisible {
                 bottomControls.padding(16).padding(.bottom, safeGeometry.safeAreaInsets.bottom)
               }
             }
+            #if os(iOS)
+              if chapterInfo {
+                phoneDescriptionPanel(height: geometry.size.height, bottomInset: safeGeometry.safeAreaInsets.bottom)
+                  .transition(.move(edge: .bottom).combined(with: .opacity))
+              }
+            #endif
             if descriptionPaneVisible && !descriptionOnRight {
               descriptionPane.padding(18).frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: min(260, geometry.size.height * 0.35))
                 .background(
                   .regularMaterial)
             }
@@ -126,8 +143,8 @@ struct MangaReaderScreen: View {
     #if os(iOS)
       .offset(y: dismissOffset)
       .scaleEffect(1 - min(0.12, dismissOffset / 2500))
-      .statusBarHidden(!controls)
-      .persistentSystemOverlays(controls ? .automatic : .hidden)
+      .statusBarHidden(!readerControlsVisible)
+      .persistentSystemOverlays(readerControlsVisible ? .automatic : .hidden)
     #endif
     #if os(macOS)
       .toolbar(.hidden, for: .windowToolbar)
@@ -140,12 +157,9 @@ struct MangaReaderScreen: View {
     }
     .sheet(isPresented: $fileInfo) {
       if let source = library.pageMedia(chapter, preferred: version, page: page) {
-        ReaderFileInfo(media: source.media, page: source.index).environmentObject(library)
+        ReaderFileInfo(chapter: chapter, media: source.media, page: source.index)
+          .environmentObject(library).environmentObject(session)
       }
-    }
-    .popover(isPresented: $chapterInfo, arrowEdge: .top) {
-      ScrollView { descriptionPane.padding(20) }
-        .frame(width: 300, height: 240).presentationCompactAdaptation(.popover)
     }
     .onAppear {
       activeSeconds = library.state(chapter.id)?.progress?.activeSeconds ?? 0
@@ -165,7 +179,7 @@ struct MangaReaderScreen: View {
       if old == .active {
         accumulateTime()
         isActive = false
-        recordProgress()
+        recordProgress(immediate: true)
       }
       if new == .active {
         started = Date()
@@ -174,10 +188,17 @@ struct MangaReaderScreen: View {
     }
     .onDisappear {
       accumulateTime()
-      recordProgress()
+      recordProgress(immediate: true)
       playback.reset()
     }
     .accessibilityIdentifier("manga-reader")
+  }
+  private var readerControlsVisible: Bool {
+    #if os(iOS)
+      controls && !chapterInfo
+    #else
+      controls
+    #endif
   }
   @ViewBuilder private var topControls: some View {
     #if os(iOS)
@@ -194,6 +215,47 @@ struct MangaReaderScreen: View {
     #endif
   }
   #if os(iOS)
+    private func closePhoneDescription() {
+      withAnimation(.easeInOut(duration: 0.25)) { chapterInfo = false; controls = true }
+    }
+    private func phoneDescriptionPanel(height: CGFloat, bottomInset: CGFloat) -> some View {
+      let minimum = min(height * 0.5, max(140, bottomInset + 116))
+      let maximum = height * 0.75
+      let base = min(maximum, max(minimum, height * descriptionFraction))
+      let panelHeight = min(maximum, max(minimum, base - descriptionDrag))
+      return VStack(spacing: 0) {
+        Capsule().fill(.white.opacity(0.5)).frame(width: 38, height: 5)
+          .frame(maxWidth: .infinity).frame(height: 32)
+          .contentShape(Rectangle())
+          .gesture(DragGesture(minimumDistance: 6)
+            .updating($descriptionDrag) { value, state, _ in state = value.translation.height }
+            .onEnded { value in
+              let proposed = base - value.translation.height
+              if proposed < minimum * 0.65 { closePhoneDescription() }
+              else { descriptionFraction = min(maximum, max(minimum, proposed)) / max(1, height) }
+            })
+          .accessibilityLabel("Description panel height")
+          .accessibilityValue("\(Int(panelHeight / max(1, height) * 100)) percent")
+          .accessibilityHint("Drag up or down to resize. Drag down to close.")
+          .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: descriptionFraction = min(0.75, panelHeight / max(1, height) + 0.1)
+            case .decrement: descriptionFraction = max(minimum / max(1, height), panelHeight / max(1, height) - 0.1)
+            @unknown default: break
+            }
+          }
+          .accessibilityAction(.escape) { closePhoneDescription() }
+          .accessibilityIdentifier("reader-description-resize")
+        ReaderChapterDescription(title: library.title(chapter),
+          description: chapter.description(in: AppConfiguration.preferredLanguage), sources: chapter.sources,
+          showsTextSizeControls: false)
+          .padding(.horizontal, 20).padding(.bottom, max(12, bottomInset))
+      }
+      .frame(maxWidth: .infinity).frame(height: panelHeight)
+      .foregroundStyle(.white).environment(\.colorScheme, .dark)
+      .background(.black.opacity(0.85))
+      .accessibilityIdentifier("reader-description-panel")
+    }
     private var phoneTopControls: some View {
       HStack(spacing: 12) {
         Button {
@@ -216,15 +278,29 @@ struct MangaReaderScreen: View {
         }.buttonStyle(.plain).accessibilityLabel("All Pages")
           .accessibilityValue(library.title(chapter) + ", " + readerSubtitle)
           .accessibilityIdentifier("reader-all-pages")
-        Menu {
-          Button("Info", systemImage: "info.circle") { fileInfo = true }
-          Button("Chapter Description", systemImage: "text.alignleft") { chapterInfo = true }
-        } label: {
-          Image(systemName: "ellipsis").font(.title3.weight(.semibold)).frame(width: 44, height: 44)
-            .glassEffect(.regular.interactive(), in: Circle())
-        }.buttonStyle(.plain).menuIndicator(.hidden).accessibilityLabel("Reader Options")
-          .accessibilityIdentifier("reader-options")
+        HStack(spacing: 4) {
+          Button { fileInfo = true } label: {
+            Image(systemName: "info.circle").frame(width: 44, height: 44)
+              .contentShape(Rectangle())
+          }.accessibilityLabel("Info").accessibilityIdentifier("reader-info")
+          if hasPhoneDescription {
+            Button {
+              withAnimation(.easeInOut(duration: 0.25)) { chapterInfo = true; controls = false }
+            } label: {
+              Image(systemName: "text.alignleft").frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+            }.accessibilityLabel("Chapter Description")
+              .accessibilityIdentifier("reader-description")
+          }
+        }.font(.title3.weight(.medium)).buttonStyle(.plain)
+          .padding(.horizontal, hasPhoneDescription ? 6 : 0)
+          .glassEffect(.regular.interactive(), in: Capsule())
+          .fixedSize(horizontal: true, vertical: false)
       }
+    }
+    private var hasPhoneDescription: Bool {
+      !chapter.description(in: AppConfiguration.preferredLanguage)
+        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     private var readerSubtitle: String {
       library.entity(chapter.workId).map(library.title)
@@ -364,12 +440,8 @@ struct MangaReaderScreen: View {
     #endif
   }
   private var descriptionPane: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Text(library.title(chapter)).font(.headline)
-      Text(chapter.description(in: AppConfiguration.preferredLanguage)).font(.callout)
-        .foregroundStyle(.secondary)
-      SourceLinksView(links: chapter.sources)
-    }
+    ReaderChapterDescription(title: library.title(chapter),
+      description: chapter.description(in: AppConfiguration.preferredLanguage), sources: chapter.sources)
   }
   @ViewBuilder private func canvas(_ canonical: Int) -> some View {
     if let source = library.pageMedia(chapter, preferred: version, page: canonical) {
@@ -409,7 +481,7 @@ struct MangaReaderScreen: View {
     if isActive { activeSeconds += max(0, Int(Date().timeIntervalSince(started))) }
     started = Date()
   }
-  private func recordProgress() {
+  private func recordProgress(immediate: Bool = false) {
     guard session.account != nil, library.entity(chapter.id) != nil, !chapter.media.isEmpty else { return }
     let old = library.stateInput(chapter.id)
     library.writeState(
@@ -420,7 +492,68 @@ struct MangaReaderScreen: View {
           completed: (old?.progress?.completed ?? false)
             || (version.kind == "video" ? videoCompleted : page == count - 1),
           activeSeconds: activeSeconds
-            + (isActive ? max(0, Int(Date().timeIntervalSince(started))) : 0))))
+            + (isActive ? max(0, Int(Date().timeIntervalSince(started))) : 0))),
+      immediate: immediate, progressOnly: true)
+  }
+}
+
+struct ReaderChapterDescription: View {
+  let title: String
+  let description: String
+  let sources: [SourceLink]
+  var showsTextSizeControls = true
+  @AppStorage("ReaderDescriptionFontSize") private var savedFontSize = 16.0
+  @ScaledMetric(relativeTo: .body) private var scaledDefaultSize = 16.0
+  private var fontSize: Double { min(32, max(12, savedFontSize.isFinite ? savedFontSize : 16)) }
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      HStack(alignment: .center, spacing: 8) {
+        Text(title).font(.headline).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+        if showsTextSizeControls { HStack(spacing: 4) {
+          Button { savedFontSize = max(12, fontSize - 2) } label: {
+            Image(systemName: "textformat.size.smaller").frame(width: buttonSize, height: buttonSize)
+          }.disabled(fontSize <= 12)
+            .accessibilityLabel("Decrease Description Text Size")
+            .accessibilityIdentifier("reader-description-smaller")
+            .help("Decrease text size")
+          Button { savedFontSize = min(32, fontSize + 2) } label: {
+            Image(systemName: "textformat.size.larger").frame(width: buttonSize, height: buttonSize)
+          }.disabled(fontSize >= 32)
+            .accessibilityLabel("Increase Description Text Size")
+            .accessibilityIdentifier("reader-description-larger")
+            .help("Increase text size")
+        }.buttonStyle(.borderless)
+          .accessibilityValue("\(Int(fontSize)) points")
+        }
+      }.fixedSize(horizontal: false, vertical: true)
+        .contextMenu {
+          if !showsTextSizeControls {
+            Button("Smaller Text", systemImage: "textformat.size.smaller") { savedFontSize = max(12, fontSize - 2) }
+              .disabled(fontSize <= 12)
+            Button("Larger Text", systemImage: "textformat.size.larger") { savedFontSize = min(32, fontSize + 2) }
+              .disabled(fontSize >= 32)
+          }
+        }
+      ScrollView(.vertical) {
+        VStack(alignment: .leading, spacing: 12) {
+          Text(description)
+            .font(.system(size: fontSize * scaledDefaultSize / 16))
+            .foregroundStyle(.secondary).textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+          SourceLinksView(links: sources)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+      }.scrollBounceBehavior(.basedOnSize)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("reader-description-scroll")
+    }.accessibilityIdentifier("reader-description")
+  }
+  private var buttonSize: CGFloat {
+    #if os(macOS)
+      28
+    #else
+      44
+    #endif
   }
 }
 
@@ -574,6 +707,7 @@ struct PagePreview: View {
 struct ChapterOverviewScreen: View {
   let chapter: LibraryEntity
   var editing: Bool
+  var embedded = false
   var preferred: MediaVersion? = nil
   var onSelect: ((Int) -> Void)?
   var onSaved: ((LibraryEntity) -> Void)?
@@ -584,6 +718,7 @@ struct ChapterOverviewScreen: View {
   @State private var dragging: Int?
   @State private var saving = false
   @State private var status = ""
+  @State private var displayedMediaId: String?
   #if os(macOS)
     @State private var selecting = false
     @State private var selectedPages = Set<Int>()
@@ -591,25 +726,37 @@ struct ChapterOverviewScreen: View {
     @State private var batchRequest: PageBatchRequest?
     @State private var addingImages = false
     @State private var imageRequest: AddImagesRequest?
-    private var currentChapter: LibraryEntity {
-      session.entities.first { $0.id == chapter.id && !$0.deleted } ?? chapter
-    }
     private var batchMedia: MediaVersion? {
       currentChapter.media.first { $0.id == batchMediaId }
+        ?? currentChapter.media.first { $0.id == displayedMediaId }
         ?? currentChapter.media.first { $0.id == preferred?.id }
         ?? currentChapter.preferredMedia(AppConfiguration.preferredLanguage)
     }
   #endif
-  private var media: MediaVersion? {
-    editing
-      ? (chapter.media.first { $0.language == chapter.originalLanguage } ?? chapter.media.first)
-      : (preferred ?? chapter.preferredMedia(AppConfiguration.preferredLanguage))
+  private var currentChapter: LibraryEntity {
+    session.entities.first { $0.id == chapter.id && !$0.deleted } ?? chapter
   }
-  var body: some View {
-    NavigationStack {
+  private var media: MediaVersion? {
+    if editing {
+      return currentChapter.media.first { $0.language == currentChapter.originalLanguage } ?? currentChapter.media.first
+    }
+    return currentChapter.media.first { $0.id == displayedMediaId }
+      ?? currentChapter.media.first { $0.id == preferred?.id }
+      ?? currentChapter.preferredMedia(AppConfiguration.preferredLanguage)
+  }
+  private var overviewContent: some View {
       VStack(spacing: 0) {
         HStack {
-          SheetHeading(editing ? "Page Order" : "All Pages", inset: 24)
+          VStack(alignment: .leading, spacing: 6) {
+            SheetHeading(editing ? "Page Order" : "All Pages", inset: 0)
+            if embedded { Text(library.title(currentChapter)).foregroundStyle(.secondary) }
+          }.padding(24)
+          Spacer(minLength: 12)
+          if !editing && currentChapter.media.count > 1 {
+            Picker("Media language", selection: Binding(get: { media?.id ?? "" }, set: { displayedMediaId = $0 })) {
+              ForEach(currentChapter.media) { Text($0.languageLabel).tag($0.id) }
+            }.labelsHidden().pickerStyle(.menu).frame(width: 90).padding(.trailing, 24)
+          }
           #if os(macOS)
             if library.canManage {
               Button("Add Images…", systemImage: "photo.badge.plus") { addingImages = true }
@@ -629,10 +776,12 @@ struct ChapterOverviewScreen: View {
         #else
           pageGrid
         #endif
-      }.navigationTitle("")
+      }.navigationTitle(embedded ? "All Pages" : "")
         .toolbar {
-          ToolbarItem(placement: .cancellationAction) {
-            Button("Close") { dismiss() }.disabled(saving)
+          if !embedded {
+            ToolbarItem(placement: .cancellationAction) {
+              Button("Close") { dismiss() }.disabled(saving)
+            }
           }
           #if os(macOS)
             if !editing, library.canManage, batchMedia?.kind == "images" {
@@ -651,15 +800,21 @@ struct ChapterOverviewScreen: View {
             }
           }
         }
+
+  }
+  var body: some View {
+    Group {
+      if embedded { overviewContent }
+      else { NavigationStack { overviewContent } }
     }
     #if os(macOS)
-      .frame(width: 850, height: 650)
+      .frame(width: embedded ? nil : 850, height: embedded ? nil : 650)
       .sheet(item: $batchRequest) { request in
         PageBatchWorkflowScreen(request: request) { updated in
           onSaved?(updated)
           selectedPages = []
           selecting = false
-          dismiss()
+          if !embedded { dismiss() }
         }.environmentObject(library).environmentObject(session)
       }
       .fileImporter(isPresented: $addingImages, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
@@ -674,7 +829,7 @@ struct ChapterOverviewScreen: View {
           onSaved?(updated)
           selectedPages = []
           selecting = false
-          dismiss()
+          if !embedded { dismiss() }
         }.environmentObject(library).environmentObject(session)
       }
       .onChange(of: currentChapter.revision) { _, _ in
@@ -684,14 +839,14 @@ struct ChapterOverviewScreen: View {
         }
       }
     #endif
-    .onAppear {
+    .task(id: (media?.id ?? "") + ":" + String(currentChapter.revision)) {
       if let media {
         order =
           editing
           ? (media.pageAlignment?.compactMap { $0 } ?? Array(0..<media.pageCount))
           : Array(
             0..<max(
-              media.pageAlignment?.count ?? media.pageCount, chapter.media.first?.pageCount ?? 0))
+              media.pageAlignment?.count ?? media.pageCount, currentChapter.media.first?.pageCount ?? 0))
       }
     }
   }
@@ -701,15 +856,19 @@ struct ChapterOverviewScreen: View {
         Text(
           editing
             ? "Drag pages to change reading order. Source filenames stay unchanged. Saved page positions follow the new order."
-            : "Choose a page to return to the reader."
+            : "Choose a page to open it in the reader."
         ).foregroundStyle(.secondary)
+        if media == nil {
+          ContentUnavailableView("No pages yet", systemImage: "photo.on.rectangle",
+            description: Text("Add images to this chapter to start reading."))
+        }
         if let media {
           LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 18)], spacing: 22) {
             ForEach(order, id: \.self) { index in
               Button {
                 if !editing {
-                  onSelect?(index)
-                  dismiss()
+                  if embedded { library.open(currentChapter, page: index, mediaId: media.id) }
+                  else { onSelect?(index); dismiss() }
                 }
               } label: {
                 VStack(spacing: 8) {
@@ -718,7 +877,7 @@ struct ChapterOverviewScreen: View {
                       .aspectRatio(0.72, contentMode: .fit).clipShape(
                         RoundedRectangle(cornerRadius: 8))
                   } else {
-                    ChapterPagePreview(chapter: chapter, preferred: media, page: index)
+                    ChapterPagePreview(chapter: currentChapter, preferred: media, page: index)
                       .aspectRatio(0.72, contentMode: .fit).clipShape(
                         RoundedRectangle(cornerRadius: 8))
                   }

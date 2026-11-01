@@ -76,3 +76,40 @@ No database or snapshot schema migration is required. Existing owner directories
 ## Mac image translation jobs
 
 No database migration is required for the optional page translation feature. Jobs/rendered-page caches live under the current owner's local `image-translations` folder; per-page archive commits use compatible organization journals. Preserve both when moving an unfinished library to another device. Running jobs restored after an app restart require Retry; successful pages and cached results are reused. The external translator's models, provider keys and deployment are managed separately.
+
+## Organization identity journals — 2026-10-22
+
+No MongoDB or metadata-cache migration is required. Optional per-file identity/rename and destination-folder fields support same-volume organization; old journals retain SHA checks. New plans include original metadata. Complete pending new work before using an older app. After a failed metadata write, renamed files can already be at their recorded destination: use File Management Queue recovery, not a fresh import. See [ADR 0017](adr/0017-same-volume-organization.md) for identity mismatch and interrupted-SMB handling.
+
+## Commit performance journal extension — 2026-10-31
+
+No MongoDB/API migration or library reimport is required. Organization file entries
+may include `copySourceIdentity` / `publishedCopyIdentity`; Recycle entries may
+include `identity` / `publishedIdentity`. These are optional object guards, separate
+from media metadata. Old SHA-only journals remain readable and recoverable. Keep
+owner-specific journals and Recycle files during upgrades; finish pending new
+operations before downgrading. The completed-journal index is disposable in-memory
+state and requires no migration. See [ADR 0017](adr/0017-same-volume-organization.md).
+
+
+## Demand-driven sync / small updates — 2026-11-01
+
+No document conversion, OAuth registration or audience change is required. Apply
+`npm run db:migrate -- --apply` against the intended database to add covered
+owner/id/revision manifests and kind/work/author/state pagination indexes. Existing
+owner uniqueness indexes and v1 migration identity remain; rerunning does not
+rewrite the existing marker's timestamp. This migration is additive and leaves
+comic metadata/files intact. Standard backup policy still applies to database work.
+
+Deploy the server before both native clients. New clients keep a legacy endpoint
+fallback during rolling upgrades; old clients remain compatible but keep their old
+traffic pattern. Manifest transport is version 2; cached `snapshot.json` stays at
+schemaVersion 1 and expands compact media paths on decode. All root IDs, media IDs,
+relative paths, alignments, download fingerprints and file journals remain valid.
+
+New owner-local `reading-outbox.json` holds latest unsent state intentions, with
+progress-only merge semantics. Preserve it with the account cache during device
+migration; do not copy it into a different account. Finish pending state writes
+before downgrade, or retain the file for the next upgrade. Older builds ignore it.
+The change is not a transaction-backed log or an offline metadata editor. See
+[ADR 0018](adr/0018-demand-driven-sync-and-small-mutations.md).

@@ -23,6 +23,12 @@ final class ImportSourceAccess: @unchecked Sendable {
   deinit { if accessing { url.stopAccessingSecurityScopedResource() } }
 }
 
+enum ChapterImportMode: String, CaseIterable {
+  case newChapter = "New Chapter"
+  case translation = "Translation"
+  case additionalPages = "Additional Pages"
+}
+
 @MainActor final class ImportWorkspaceModel: ObservableObject {
   let library: LibraryUIModel
   @Published var queue: [ImportCandidate] = []
@@ -30,7 +36,11 @@ final class ImportSourceAccess: @unchecked Sendable {
   @Published var input = MetadataInput(
     kind: .chapter, title: "", originalLanguage: AppConfiguration.preferredLanguage)
   @Published var translationOf: String?
-  @Published var isTranslation = false
+  @Published var mode: ChapterImportMode = .newChapter
+  var isTranslation: Bool {
+    get { mode == .translation }
+    set { mode = newValue ? .translation : .newChapter }
+  }
   @Published var pageAlignment: [Int?] = []
   private var processing: Task<Void, Never>?
   private var added: [String: (chapterId: String, mediaId: String)] = [:]
@@ -45,9 +55,11 @@ final class ImportSourceAccess: @unchecked Sendable {
   init(library: LibraryUIModel) { self.library = library }
   var current: ImportCandidate? { queue.indices.contains(index) ? queue[index] : nil }
   var canSubmit: Bool {
-    isTranslation
-      ? library.entity(translationOf)?.kind == .chapter
-      : !input.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    switch mode {
+    case .translation: library.entity(translationOf)?.kind == .chapter
+    case .additionalPages: library.entity(translationOf)?.kind == .chapter && current?.kind == "images"
+    case .newChapter: !input.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
   }
   func managedPath() throws -> String {
     let original = library.entity(translationOf)
@@ -60,7 +72,11 @@ final class ImportSourceAccess: @unchecked Sendable {
     return try PathPolicy.chapterPath(
       author: author, series: series, work: work?.title, chapter: original?.title ?? input.title,
       language: input.originalLanguage,
-      mediaLanguageCount: original == nil ? 1 : (original!.media.count + 1))
+      mediaLanguageCount: original.map { chapter in
+        chapter.media.count + (mode == .additionalPages && chapter.media.contains {
+          $0.language == input.originalLanguage
+        } ? 0 : 1)
+      } ?? 1)
   }
   var proposedPath: String {
     (try? managedPath()) ?? "Use names without /, \\, or : before moving files."
@@ -93,6 +109,20 @@ final class ImportSourceAccess: @unchecked Sendable {
     if let id = name.pixivID { input.sources = [.init(site: "pixiv", value: id)] }
     status = queue[index].warnings.joined(separator: " ")
   }
+  func additionalImagesRequest() throws -> AddImagesRequest {
+    guard mode == .additionalPages, let candidate = current, candidate.kind == "images",
+      let chapter = library.entity(translationOf), chapter.kind == .chapter else {
+      throw LoginError.server("Choose an existing chapter and an image or image folder to add pages.")
+    }
+    return AddImagesRequest(chapter: chapter, files: try candidate.pages.map { try ImportSourceAccess($0) })
+  }
+  func finishAdditionalPages(candidateId: String) {
+    guard let position = queue.firstIndex(where: { $0.id == candidateId }) else { return }
+    queue.remove(at: position)
+    result = "Pages added to the chapter. Original source images were kept."
+    if queue.isEmpty { input.title = ""; status = "Import complete" }
+    else { select(min(position, queue.count - 1)) }
+  }
   func close() {
     processing?.cancel()
     processing = nil
@@ -123,7 +153,7 @@ final class ImportSourceAccess: @unchecked Sendable {
     }
   }
   @discardableResult func process(move: Bool) -> Task<Void, Never>? {
-    guard !busy, library.canManage, let candidate = current,
+    guard !busy, mode != .additionalPages, library.canManage, let candidate = current,
       translationOf != nil || !input.title.trimmingCharacters(in: .whitespaces).isEmpty
     else { return nil }
     busy = true
@@ -188,7 +218,7 @@ final class ImportSourceAccess: @unchecked Sendable {
         }
         try checkOwner()
         let resource = sourceResource(for: candidate)
-        let fileGrant = candidate.kind != "images" && resource == candidate.source
+        let fileGrant = resource == candidate.source && candidate.pages == [resource]
         let folder = fileGrant ? resource.deletingLastPathComponent() : resource
         let sourcePaths = try relativeSourcePaths(for: candidate, under: folder)
         failureContext =
@@ -282,7 +312,8 @@ final class ImportSourceAccess: @unchecked Sendable {
           _ = try await library.local.validateDestinationAsync(managed)
           let path = try managedPath()
           let relative =
-            candidate.kind == "images" ? path : path + "/" + candidate.source.lastPathComponent
+            candidate.kind == "images" && candidate.pages != [candidate.source]
+              ? path : path + "/" + candidate.source.lastPathComponent
           guard let journals = session.cacheDirectory?.appendingPathComponent("commit-journals")
           else { throw LoginError.invalidToken }
           var update = chapter.input
@@ -354,7 +385,7 @@ final class ImportSourceAccess: @unchecked Sendable {
       ?? roots.first { $0.id == originalRoot }?.id ?? roots.first?.id
   }
   func enqueue(move: Bool) {
-    guard !busy, let candidate = current, !isTranslation || translationOf != nil else { return }
+    guard !busy, mode != .additionalPages, let candidate = current, !isTranslation || translationOf != nil else { return }
     library.fileQueue.enqueue(
       candidate: candidate, input: input, translationOf: translationOf,
       alignment: pageAlignment, destinationId: destinationId, move: move, sources: sources)
@@ -543,6 +574,7 @@ struct ImportWorkspace: View {
   @State private var compactActions = false
   @State private var destinationPath = ""
   @State private var previewURL: URL?
+  @State private var additionalRequest: AddImagesRequest?
   init(library: LibraryUIModel, model: ImportWorkspaceModel? = nil) {
     _model = StateObject(wrappedValue: model ?? ImportWorkspaceModel(library: library))
   }
@@ -566,10 +598,16 @@ struct ImportWorkspace: View {
     }
     .fileImporter(
       isPresented: $choosing,
-      allowedContentTypes: [.folder, .pdf, .movie, UTType(filenameExtension: "webm") ?? .movie],
+      allowedContentTypes: [.folder, .image, .pdf, .movie, UTType(filenameExtension: "webm") ?? .movie],
       allowsMultipleSelection: true
     ) { result in
       do { model.append(try result.get()) } catch { model.status = error.localizedDescription }
+    }
+    .sheet(item: $additionalRequest) { request in
+      let candidateId = model.current?.id ?? ""
+      AddImagesScreen(request: request, initialLanguage: model.input.originalLanguage) { _ in
+        model.finishAdditionalPages(candidateId: candidateId)
+      }.environmentObject(library).environmentObject(session)
     }
     .sheet(item: $creating) { request in
       MetadataEditor(
@@ -639,13 +677,11 @@ struct ImportWorkspace: View {
     }
     .onChange(of: model.translationOf) { _, _ in
       model.pageAlignment = []
-      if model.translationOf != nil { alignment = true }
+      if model.isTranslation && model.translationOf != nil { alignment = true }
     }
-    .onChange(of: model.isTranslation) { _, enabled in
-      if !enabled {
-        model.translationOf = nil
-        model.pageAlignment = []
-      }
+    .onChange(of: model.mode) { _, _ in
+      model.translationOf = nil
+      model.pageAlignment = []
     }
     .onChange(of: model.current?.id) { _, _ in previewURL = nil }
     .onDisappear { model.close() }
@@ -705,7 +741,7 @@ struct ImportWorkspace: View {
     VStack(spacing: 14) {
       Image(systemName: "folder.badge.plus").font(.system(size: 44, weight: .light))
         .foregroundStyle(.pink)
-      Text(overlay ? "Drop to Add Files" : "Drop folders, PDFs or videos").font(.title2.bold())
+      Text(overlay ? "Drop to Add Files" : "Drop folders, images, PDFs or videos").font(.title2.bold())
       Text(
         overlay
           ? "Add them to your import queue."
@@ -791,13 +827,19 @@ struct ImportWorkspace: View {
             .disabled(model.busy)
           Spacer(minLength: 8)
           Button("Add without Moving") { model.enqueue(move: false) }
-            .disabled(model.busy || !model.canSubmit)
+            .disabled(model.busy || !model.canSubmit || model.mode == .additionalPages)
         }.frame(maxWidth: .infinity)
-        Button("Add to Library & Move Files") {
-          model.defaultDestination()
-          model.review = true
+        Button(model.mode == .additionalPages ? "Add Pages…" : "Add to Library & Move Files") {
+          if model.mode == .additionalPages {
+            do { additionalRequest = try model.additionalImagesRequest() }
+            catch { model.status = error.localizedDescription }
+          } else {
+            model.defaultDestination()
+            model.review = true
+          }
         }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-          .disabled(model.busy || !model.canSubmit || !candidate.warnings.isEmpty)
+          .disabled(model.busy || !model.canSubmit
+            || (model.mode != .additionalPages && !candidate.warnings.isEmpty))
       }
     }.padding(.horizontal, 28).padding(.vertical, 16)
       .frame(maxWidth: .infinity, alignment: .leading).background(.bar)
@@ -852,12 +894,14 @@ struct ImportWorkspace: View {
       }.frame(width: stacked ? nil : 260).frame(maxWidth: stacked ? 300 : nil)
       VStack(alignment: .leading, spacing: 18) {
         Text("Chapter \(model.index + 1) of \(model.queue.count)").font(.title2.bold())
-        Toggle("Add as a media translation", isOn: $model.isTranslation)
-        if model.isTranslation {
-          field("Original Chapter") {
+        Picker("Import mode", selection: $model.mode) {
+          ForEach(ChapterImportMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+        }.pickerStyle(.segmented).labelsHidden().accessibilityIdentifier("import-mode")
+        if model.mode != .newChapter {
+          field(model.isTranslation ? "Original Chapter" : "Chapter") {
             EntitySearchField(
               label: "Search original chapter", kind: .chapter, selected: $model.translationOf)
-            if model.translationOf != nil {
+            if model.isTranslation && model.translationOf != nil {
               Button("Align Page Order…", systemImage: "square.split.2x1") { alignment = true }
             }
           }
@@ -877,23 +921,30 @@ struct ImportWorkspace: View {
               create: { creating = .init(kind: .work, initialTitle: $0) })
           }
         }
-        Picker("Media language", selection: $model.input.originalLanguage) {
-          ForEach(mediaLanguages, id: \.code) { Text($0.name).tag($0.code) }
+        field("Media Language") {
+          Picker("Media language", selection: $model.input.originalLanguage) {
+            ForEach(mediaLanguages, id: \.code) { Text($0.name).tag($0.code) }
+          }.labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
         }
-        field("Chapter Description") {
-          TextEditor(text: $model.input.description).scrollContentBackground(.hidden)
-            .fullFieldFocus().frame(
-              height: 95
-            ).overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-        }
-        if !model.isTranslation {
-          field("Tags") { TagTokenPicker(selected: $model.input.tagIds) }
-          Toggle("NSFW · hide by default", isOn: $model.input.nsfw)
-          field("Source IDs") {
+        if model.mode == .additionalPages {
+          Text(candidate.kind == "images"
+            ? "Append these images in filename order. Chapter metadata stays unchanged; review the destination before committing."
+            : "Additional Pages accepts images only. Choose an image or image folder.")
+            .font(.callout).foregroundStyle(.secondary)
+        } else {
+          multilineField("Chapter Description") {
+            TextEditor(text: $model.input.description).scrollContentBackground(.hidden)
+              .fullFieldFocus().frame(height: 95)
+              .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+          }
+          if model.mode == .newChapter {
+            multilineField("Tags") { TagTokenPicker(selected: $model.input.tagIds) }
+            Toggle("NSFW · hide by default", isOn: $model.input.nsfw)
             VStack(spacing: 10) {
               ForEach(["pixiv", "fanbox", "ehentai"], id: \.self) { site in
-                TextField(site.capitalized, text: source(site)).fullFieldFocus().textFieldStyle(
-                  .roundedBorder)
+                field(site == "pixiv" ? "Pixiv ID" : site == "fanbox" ? "FANBOX ID" : "E-Hentai ID") {
+                  TextField(site.capitalized, text: source(site)).fullFieldFocus().textFieldStyle(.roundedBorder)
+                }
               }
             }
           }
@@ -901,9 +952,15 @@ struct ImportWorkspace: View {
       }.frame(maxWidth: .infinity)
     }
   }
-  private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content)
-    -> some View
-  {
+  private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+    HStack(alignment: .top, spacing: 12) {
+      Text(title).font(.subheadline.weight(.medium)).frame(width: 108, alignment: .leading)
+        .padding(.top, 5)
+      VStack(alignment: .leading, spacing: 8) { content() }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+  private func multilineField<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
     VStack(alignment: .leading, spacing: 7) {
       Text(title).font(.subheadline.weight(.medium))
       content()

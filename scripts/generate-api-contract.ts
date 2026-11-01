@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { writeFileSync } from "node:fs";
 import { metadataSchema, stateSchema } from "../apps/server/src/domain.js";
+import { patchSchema, syncRecordsSchema } from "../apps/server/src/sync.js";
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const input = z.toJSONSchema(metadataSchema, { io: "input" });
 const state = z.toJSONSchema(stateSchema, { io: "input" });
@@ -87,6 +88,39 @@ const operation = (scope: string, fields: object) => ({
   ...fields,
 });
 const body = (name: string) => ({ required: true, ...json(ref(name)) });
+const pagination = [
+  {
+    name: "limit",
+    in: "query",
+    schema: { type: "integer", minimum: 1, maximum: 250, default: 100 },
+  },
+  { name: "after", in: "query", schema: { type: "string" } },
+];
+const mediaSchema = z.toJSONSchema(metadataSchema.shape.media.unwrap().element);
+const { relativePaths: _paths, ...compactMediaProperties } =
+  mediaSchema.properties!;
+const compactEntity = {
+  ...entity,
+  properties: {
+    ...entity.properties,
+    media: {
+      type: "array",
+      items: {
+        ...mediaSchema,
+        required: [
+          ...(mediaSchema.required ?? []).filter((k) => k !== "relativePaths"),
+          "pathDirectory",
+          "pathFiles",
+        ],
+        properties: {
+          ...compactMediaProperties,
+          pathDirectory: { type: "string" },
+          pathFiles: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
+  },
+};
 const paths = {
   "/health": {
     get: {
@@ -114,6 +148,7 @@ const paths = {
       operationId: "listEntities",
       parameters: [
         nsfw,
+        ...pagination,
         ...["kind", "q", "workId", "authorId"].map((name) => ({
           name,
           in: "query",
@@ -136,7 +171,10 @@ const paths = {
       responses: response({
         type: "object",
         required: ["items"],
-        properties: { items: { type: "array", items: ref("Entity") } },
+        properties: {
+          items: { type: "array", items: ref("Entity") },
+          nextCursor: { type: "string" },
+        },
       }),
     }),
     post: operation("manga:manage", {
@@ -157,6 +195,18 @@ const paths = {
       requestBody: body("MetadataInput"),
       responses: response(ref("Entity")),
     }),
+    patch: operation("manga:manage", {
+      operationId: "patchEntity",
+      parameters: [id, header],
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": { schema: ref("MetadataPatch") },
+          "application/json-patch+json": { schema: ref("MetadataPatch") },
+        },
+      },
+      responses: response(ref("MutationReceipt")),
+    }),
     delete: operation("manga:manage", {
       operationId: "deleteEntity",
       parameters: [id, header],
@@ -169,11 +219,22 @@ const paths = {
   "/v1/states": {
     get: operation("manga:read", {
       operationId: "listStates",
-      parameters: [nsfw],
+      parameters: [
+        nsfw,
+        ...pagination,
+        {
+          name: "entityId",
+          in: "query",
+          schema: { type: "string", format: "uuid" },
+        },
+      ],
       responses: response({
         type: "object",
         required: ["items"],
-        properties: { items: { type: "array", items: ref("State") } },
+        properties: {
+          items: { type: "array", items: ref("State") },
+          nextCursor: { type: "string" },
+        },
       }),
     }),
     put: operation("manga:state:write", {
@@ -181,6 +242,40 @@ const paths = {
       parameters: [header],
       requestBody: body("StateInput"),
       responses: response(ref("State")),
+    }),
+  },
+  "/v1/states/{id}": {
+    get: operation("manga:read", {
+      operationId: "getPersonalState",
+      parameters: [
+        {
+          ...id,
+          schema: {
+            type: "string",
+            description: "entity UUID:entity or entity UUID:page index",
+          },
+        },
+      ],
+      responses: response(ref("State")),
+    }),
+  },
+  "/v1/sync/manifest": {
+    get: operation("manga:read", {
+      operationId: "syncManifest",
+      parameters: [
+        { name: "If-None-Match", in: "header", schema: { type: "string" } },
+      ],
+      responses: {
+        ...response(ref("SyncManifest")),
+        304: { description: "Owner manifest unchanged; empty body" },
+      },
+    }),
+  },
+  "/v1/sync/records": {
+    post: operation("manga:read", {
+      operationId: "fetchSyncRecords",
+      requestBody: body("SyncRecordsInput"),
+      responses: response(ref("SyncRecords")),
     }),
   },
   "/v1/sync": {
@@ -204,7 +299,7 @@ const doc = {
   openapi: "3.1.0",
   info: {
     title: "MangaReader Metadata API",
-    version: "0.1.0",
+    version: "0.2.0",
     description:
       "Account-scoped control plane. Comic bytes and SMB credentials never pass through this API.",
   },
@@ -220,6 +315,63 @@ const doc = {
     },
     schemas: {
       MetadataInput: input,
+      MetadataPatch: z.toJSONSchema(patchSchema, { io: "input" }),
+      MutationReceipt: {
+        type: "object",
+        required: ["id", "revision", "updatedAt", "title"],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          revision: { type: "integer", minimum: 1 },
+          updatedAt: { type: "string", format: "date-time" },
+          title: { type: "string" },
+        },
+      },
+      SyncManifest: {
+        type: "object",
+        required: ["schemaVersion", "entities", "states"],
+        properties: {
+          schemaVersion: { const: 2 },
+          entities: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["id", "revision", "deleted"],
+              properties: {
+                id: { type: "string", format: "uuid" },
+                revision: { type: "integer", minimum: 1 },
+                deleted: { type: "boolean" },
+              },
+            },
+          },
+          states: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["id", "revision"],
+              properties: {
+                id: { type: "string" },
+                revision: { type: "integer", minimum: 1 },
+              },
+            },
+          },
+        },
+      },
+      SyncRecordsInput: z.toJSONSchema(syncRecordsSchema, { io: "input" }),
+      CompactEntity: compactEntity,
+      SyncRecords: {
+        type: "object",
+        required: ["schemaVersion", "entities", "states"],
+        properties: {
+          schemaVersion: { const: 1 },
+          entities: { type: "array", items: ref("CompactEntity") },
+          states: { type: "array", items: ref("State") },
+          remainingEntities: {
+            type: "array",
+            items: { type: "string", format: "uuid" },
+          },
+          remainingStates: { type: "array", items: { type: "string" } },
+        },
+      },
       Entity: entity,
       StateInput: state,
       State: storedState,

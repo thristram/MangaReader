@@ -32,30 +32,33 @@ extension LibraryUIModel {
       organizingChapterIds.insert(chapter.id)
       defer { organizingChapterIds.remove(chapter.id) }
       let folder = try await local.validateDestinationAsync(destination)
-      let other = session.entities.filter { !$0.deleted && $0.id != chapter.id }.flatMap(\.media)
-        + plan.metadata.media
-      let roots = try await local.referenceRoots(for: other)
-      let referenced = try await FileTasks.perform {
-        Set(other.flatMap { media -> [String] in
-          guard let root = roots[media.storageRootId] else { return [] }
+      let sourceRoot = try await local.readingRootURL(plan.source.storageRootId)
+      let selectedPaths = plan.selectedIndices.map { plan.source.relativePaths[$0] }
+      let candidates = try await FileTasks.perform {
+        try selectedPaths.map { try PathPolicy.mutationPath($0, under: sourceRoot) }
+      }
+      let external = try await local.sharedSources(candidates, excluding: Set(chapter.media.map(\.id)))
+      let remainingMedia = plan.metadata.media
+      let remainingRoots = try await local.referenceRoots(for: remainingMedia)
+      let retained = try await FileTasks.perform {
+        Set(remainingMedia.flatMap { media -> [String] in
+          guard let root = remainingRoots[media.storageRootId] else { return [] }
           return media.relativePaths.map { root.appendingPathComponent($0).standardizedFileURL.path.lowercased() }
         })
       }
-      var files: [OrganizationFile] = []
-      for (offset, index) in plan.selectedIndices.enumerated() {
-        let source = try await local.url(for: plan.source, file: index)
-        let recycle = "Recycle/PageEdits/" + request.id + "/" + String(offset + 1) + "-" + source.lastPathComponent
-        files.append(OrganizationFile(source: source, relativePath: recycle,
-          keepSource: referenced.contains(source.standardizedFileURL.path.lowercased())))
+      let files = candidates.enumerated().map { offset, source in
+        OrganizationFile(source: source,
+          relativePath: "Recycle/PageEdits/" + request.id + "/" + String(offset + 1) + "-" + source.lastPathComponent,
+          keepSource: external.contains(source.path) || retained.contains(source.path.lowercased()))
       }
       guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
-      let sourceRoot = try await local.readingRootURL(plan.source.storageRootId)
       let cleanup = EmptyMediaFolder.plan(media: [plan.source], roots: [plan.source.storageRootId: sourceRoot], chapterTitle: chapter.title)
       let operations = files
       let staged = try await FileTasks.perform {
         let prepared = try FileOrganization.prepare(entityId: chapter.id, revision: chapter.revision,
           metadata: plan.metadata, libraryId: owner, rootId: destination.id, root: folder,
-          sourceRootIds: [plan.source.storageRootId], files: operations, directory: directory, cleanupFolders: cleanup)
+          sourceRootIds: [plan.source.storageRootId], files: operations, directory: directory, cleanupFolders: cleanup,
+          originalMetadata: chapter.input, allowRename: true)
         return try FileOrganization.stage(prepared, in: directory)
       }
       try Task.checkCancellation()
@@ -291,20 +294,19 @@ extension LibraryUIModel {
     // An already-organized chapter must not contact unrelated/disconnected roots.
     if !relocations.isEmpty {
       progress("Preparing existing files…")
-      let allMedia = session.entities.filter { !$0.deleted && $0.id != chapter.id }.flatMap(\.media)
-      let otherRoots = try await local.referenceRoots(for: allMedia)
       let work = relocations
-      files = try await FileTasks.perform {
-        let sharedPaths = Set(allMedia.flatMap { media -> [String] in
-          guard let root = otherRoots[media.storageRootId] else { return [] }
-          return media.relativePaths.map { root.appendingPathComponent($0).standardizedFileURL.path.lowercased() }
-        })
-        return try work.compactMap { item in
-          let source = try PathPolicy.mutationPath(item.old, under: item.root)
-          guard source.standardizedFileURL != root.appendingPathComponent(item.new).standardizedFileURL else { return nil }
-          return OrganizationFile(source: source, relativePath: item.new,
-            keepSource: sharedPaths.contains(source.standardizedFileURL.path.lowercased()))
-        }
+      let resolved = try await FileTasks.perform {
+        try work.map { try PathPolicy.mutationPath($0.old, under: $0.root) }
+      }
+      let shared = try await local.sharedSources(resolved, excluding: Set(chapter.media.map(\.id)))
+      let duplicates = Set(Dictionary(grouping: resolved, by: { $0.path.lowercased() }).filter { $0.value.count > 1 }.keys)
+      let retained = Set(metadata.media.flatMap(\.relativePaths).map {
+        root.appendingPathComponent($0).standardizedFileURL.path.lowercased()
+      })
+      files = zip(resolved, relocations).map { source, item in
+        OrganizationFile(source: source, relativePath: item.new,
+          keepSource: shared.contains(source.path) || duplicates.contains(source.path.lowercased())
+            || retained.contains(source.path.lowercased()))
       }
     }
     let dummy = MediaVersion(language: language, kind: "images", storageRootId: destinationId, relativePaths: [], pageCount: 0)
@@ -364,7 +366,7 @@ extension LibraryUIModel {
       let prepared = try FileOrganization.prepare(entityId: chapter.id, revision: chapter.revision,
         metadata: update, libraryId: owner, rootId: destinationId, root: root,
         sourceRootIds: Array(sourceRoots.keys), files: operations, directory: directory, cleanupFolders: cleanup,
-        sourceBookmarks: bookmarks, originalMetadata: chapter.input)
+        sourceBookmarks: bookmarks, originalMetadata: chapter.input, allowRename: true)
       return try FileOrganization.stage(prepared, in: directory)
     }
     try Task.checkCancellation()

@@ -33,6 +33,7 @@ struct MangaRootScreen: View {
     #if os(macOS)
       .task(id: session.account?.ownerId) { await library.translationQueue.restore() }
     #endif
+    .task(id: session.account?.ownerId) { await library.restoreStateOutbox() }
     .onChange(of: session.account?.ownerId) { _, _ in
       library.reset()
       #if os(macOS)
@@ -190,15 +191,29 @@ struct WelcomeScreen: View {
       }
       .searchable(text: $library.query, placement: .toolbar, prompt: "Search your library")
       .toolbar {
-        ToolbarItemGroup(placement: .primaryAction) {
+        ToolbarItemGroup(placement: .navigation) {
           if library.canManage {
             Button("Import", systemImage: "plus") { library.selection = .importing }
               .keyboardShortcut("o")
           }
           Button("Sync", systemImage: "arrow.triangle.2.circlepath", action: library.synchronize)
         }
+        if showsCollectionFilters {
+          ToolbarItem(placement: .secondaryAction) {
+            HStack(spacing: 0) { MacCollectionFilterButton() }
+          }.sharedBackgroundVisibility(.hidden)
+        }
+        DefaultToolbarItem(kind: .search, placement: .secondaryAction)
       }
       .accessibilityIdentifier("mac-library-shell")
+    }
+    private var showsCollectionFilters: Bool {
+      switch library.path.last {
+      case .entity: return true
+      case .pages: return false
+      case .page(let page): return page.hasCollectionFilters
+      case nil: return (library.selection ?? .library).hasCollectionFilters
+      }
     }
     private func sidebarRow(_ page: LibraryPage) -> some View {
       Label {
@@ -319,6 +334,12 @@ struct LibraryDestination: View {
   var body: some View {
     switch route {
     case .page(let page): LibraryPageScreen(page: page)
+    case .pages(let id):
+      if let chapter = library.entity(id), chapter.kind == .chapter {
+        ChapterOverviewScreen(chapter: chapter, editing: false, embedded: true)
+      } else {
+        ContentUnavailableView("Chapter unavailable", systemImage: "book.closed")
+      }
     case .entity(let id):
       if let entity = library.entity(id) {
         EntityCollectionScreen(entity: entity)
@@ -351,6 +372,12 @@ struct LibraryPageScreen: View {
     #if os(iOS)
       .navigationTitle(page == .savedPages ? "Saved" : page.title)
       .toolbarTitleDisplayMode(.large)
+      .toolbar {
+        if page.hasCollectionFilters && page != .savedPages {
+          ToolbarItem(placement: .topBarTrailing) { PhoneCollectionFilterButton() }
+            .sharedBackgroundVisibility(.hidden)
+        }
+      }
     #else
       .navigationTitle(page.title)
     #endif

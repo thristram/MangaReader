@@ -26,6 +26,18 @@ final class PhoneSceneDelegate: UIResponder, UIWindowSceneDelegate {
   func sceneDidBecomeActive(_ scene: UIScene) {
     guard let app = UIApplication.shared.delegate as? PhoneAppDelegate, app.session.account != nil
     else { return }
-    Task { try? await app.session.synchronize() }
+    app.session.setAppActive(true)
   }
+  func sceneWillResignActive(_ scene: UIScene) {
+    (UIApplication.shared.delegate as? PhoneAppDelegate)?.session.setAppActive(false)
+  }
+  func sceneDidEnterBackground(_ scene: UIScene) {
+    guard let app = UIApplication.shared.delegate as? PhoneAppDelegate else { return }
+    let task = UIApplication.shared.beginBackgroundTask(withName: "Persist reading progress")
+    Task {
+      await app.session.persistReadingState?()
+      if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
+    }
+  }
+
 }

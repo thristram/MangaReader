@@ -11,6 +11,23 @@ import MangaCore
     let library = try NativeUIFixtures.seed(session: session, directory: directory)
     defer { library.reset() }
     let work = session.entities.first { $0.id == "w0" }!
+    // Reassign through the same normalization as the edit sheet. The fixture API
+    // enforces the real server's author/series/work consistency checks.
+    let reassigned = session.entities.first { $0.id == "c0-0" }!
+    let nextSeries = try await session.create(.init(kind: .series, title: "Different Series", authorId: "a1"))
+    let nextWork = try await session.create(.init(kind: .work, title: "Different Comic",
+      authorId: "a1", seriesId: nextSeries.id))
+    let reassignedInput = try MetadataHierarchy.selecting(.work, id: nextWork.id,
+      in: reassigned.input, entities: session.entities)
+    try await session.update(reassigned, input: reassignedInput)
+    let savedChapter = session.entities.first { $0.id == reassigned.id }!
+    try expect(savedChapter.workId == nextWork.id && savedChapter.authorId == "a1"
+      && savedChapter.seriesId == nextSeries.id, "reassigning a chapter did not inherit destination parents")
+    try expect(savedChapter.media[0].relativePaths == reassigned.media[0].relativePaths,
+      "metadata reassignment moved files before commit")
+    try expect(library.chapters(nextWork).contains { $0.id == reassigned.id },
+      "new comic's collection did not show reassigned chapter")
+    try await session.update(savedChapter, input: reassigned.input)
     let pdf = session.entities.flatMap(\.media).first { $0.kind == "pdf" }!
     let pdfBytes = try Data(contentsOf: try await library.mediaURL(pdf, index: 0))
     let incoming = directory.appendingPathComponent("Single Files")

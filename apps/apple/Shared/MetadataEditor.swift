@@ -44,7 +44,8 @@ struct TranslateButton: View {
         Image(systemName: "character.bubble")
       }
     }
-    .buttonStyle(.borderless).disabled(translating).help(
+    .buttonStyle(.borderless).disabled(translating
+      || (field == "title" ? entity.title : entity.description).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).help(
       "Translate \(field) to \(AppConfiguration.preferredLanguage)"
     )
     .accessibilityLabel("Translate " + field)
@@ -137,6 +138,7 @@ struct EntitySearchField: View {
   let kind: EntityKind
   @Binding var selected: String?
   var create: ((String) -> Void)?
+  var onPendingChange: (Bool) -> Void = { _ in }
   @EnvironmentObject private var session: AppSession
   @State private var query = ""
   @State private var expanded = false
@@ -148,24 +150,31 @@ struct EntitySearchField: View {
   }
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
-      TextField(label, text: $query, onEditingChanged: { expanded = $0 }).fullFieldFocus()
+      TextField(label, text: $query, onEditingChanged: { if $0 { expanded = true } }).fullFieldFocus()
         .textFieldStyle(
           .roundedBorder)
+        .accessibilityIdentifier("entity-search-" + kind.rawValue)
+        .onSubmit(resolveQuery)
       if expanded {
         VStack(alignment: .leading, spacing: 0) {
           Button("None") {
             selected = nil
             query = ""
             expanded = false
+            onPendingChange(false)
           }.padding(7)
           ForEach(
             choices
           ) { entity in
-            Button(entity.title) {
+            Button {
               selected = entity.id
               query = entity.title
               expanded = false
-            }.padding(7)
+              onPendingChange(false)
+            } label: {
+              Text(entity.title).padding(7).frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityIdentifier("entity-option-" + entity.id)
           }
           if let create, !query.isEmpty {
             Button("Create “\(query)”", systemImage: "plus") {
@@ -177,7 +186,11 @@ struct EntitySearchField: View {
           .quaternary, in: RoundedRectangle(cornerRadius: 8))
       }
     }.onAppear { query = selectedTitle }
-      .onChange(of: selected) { _, _ in query = selectedTitle }
+      .onChange(of: query) { _, _ in
+        guard expanded else { return }
+        resolveQuery()
+      }
+      .onChange(of: selected) { _, _ in query = selectedTitle; onPendingChange(false) }
       .onChange(of: selectedTitle) { _, title in if !expanded { query = title } }
       .onChange(of: session.metadataGeneration) { _, _ in
         if let id = selected, session.catalog.entity(id, showNSFW: true) == nil {
@@ -185,6 +198,19 @@ struct EntitySearchField: View {
           query = ""
         }
       }
+  }
+  private func resolveQuery() {
+    let name = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    if name == selectedTitle || name.isEmpty && selected == nil {
+      onPendingChange(false)
+      return
+    }
+    let matches = session.catalog.visible(kind: kind, showNSFW: AppConfiguration.showNSFW)
+      .filter { $0.title.caseInsensitiveCompare(name) == .orderedSame }
+    if matches.count == 1 {
+      selected = matches[0].id
+      onPendingChange(false)
+    } else { onPendingChange(true) }
   }
 }
 struct SourceLinksEditor: View {
@@ -252,10 +278,12 @@ struct MetadataEditor: View {
   @State private var pageOverview = false
   @State private var creating: EditorRequest?
   @State private var editingRevision: Int?
+  @State private var pendingParents = Set<EntityKind>()
   #if os(macOS)
     @State private var mediaLanguageReview: MediaLanguageReview?
     @State private var mediaDeletion: PageBatchRequest?
     @State private var translatingChapter: LibraryEntity?
+    @State private var confirmingDeletion = false
   #endif
   init(request: EditorRequest, onSave: ((LibraryEntity) -> Void)? = nil) {
     self.request = request
@@ -310,14 +338,14 @@ struct MetadataEditor: View {
                 Button("Translate Title", systemImage: "character.bubble") {
                   translate(field: "title")
                 }
-                .labelStyle(.iconOnly).disabled(translating)
+                .labelStyle(.iconOnly).disabled(translating || input.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
               }
               HStack(alignment: .top) {
                 TextEditor(text: description).scrollContentBackground(.hidden).frame(minHeight: 95)
                   .fullFieldFocus()
                 Button("Translate Description", systemImage: "character.bubble") {
                   translate(field: "description")
-                }.labelStyle(.iconOnly).disabled(translating)
+                }.labelStyle(.iconOnly).disabled(translating || input.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
               }
               Text(
                 "Missing translations use the original text. Translating text keeps the same comic pages."
@@ -327,15 +355,18 @@ struct MetadataEditor: View {
           if ![EntityKind.author, .tag, .storageRoot].contains(input.kind) {
             Section("Collection") {
               EntitySearchField(
-                label: "Search authors", kind: .author, selected: $input.authorId,
-                create: { creating = .init(kind: .author, initialTitle: $0) })
+                label: "Search authors", kind: .author, selected: parentBinding(.author),
+                create: { creating = .init(kind: .author, initialTitle: $0) },
+                onPendingChange: { parentPending(.author, $0) })
               EntitySearchField(
-                label: "Series (optional)", kind: .series, selected: $input.seriesId,
-                create: { creating = .init(kind: .series, initialTitle: $0) })
+                label: "Series (optional)", kind: .series, selected: parentBinding(.series),
+                create: { creating = .init(kind: .series, initialTitle: $0) },
+                onPendingChange: { parentPending(.series, $0) })
               if input.kind == .chapter {
                 EntitySearchField(
-                  label: "Comic (optional)", kind: .work, selected: $input.workId,
-                  create: { creating = .init(kind: .work, initialTitle: $0) })
+                  label: "Comic (optional)", kind: .work, selected: parentBinding(.work),
+                  create: { creating = .init(kind: .work, initialTitle: $0) },
+                  onPendingChange: { parentPending(.work, $0) })
               }
             }
           }
@@ -400,33 +431,55 @@ struct MetadataEditor: View {
               ReferencedFoldersView(entity: entity)
             }
           }
-          #if os(macOS)
-            if input.kind == .chapter, let original = request.entity, library.canManage {
-              Section {
-                Button("Translate Manga…", systemImage: "character.bubble") {
-                  if let current = session.entities.first(where: { $0.id == original.id && !$0.deleted }) {
-                    translatingChapter = current
-                  }
-                }.disabled(saving || translating || !input.media.contains { $0.kind != "video" })
-                Text("Translate image or PDF pages and add them to a media language. Monitor progress in Pending Organization → Translation Queue.")
-                  .font(.caption).foregroundStyle(.secondary)
-              }
-            }
-          #endif
-          if !status.isEmpty { Section { Text(status).font(.callout).foregroundStyle(.secondary) } }
         }.formStyle(.grouped)
+        if !pendingParents.isEmpty || !status.isEmpty {
+          Text(!pendingParents.isEmpty ? "Select a collection from the search results before saving." : status)
+            .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.bottom, 12)
+        }
       }
       .navigationTitle("")
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") { dismiss() }.disabled(saving || translating)
+      #if os(macOS)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+          VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 12) {
+              if let original = request.entity, library.canManage,
+                [.work, .chapter].contains(original.kind) {
+                Button(original.kind == .chapter ? "Delete Chapter" : "Delete Comic",
+                  systemImage: "trash", role: .destructive) { confirmingDeletion = true }
+                  .accessibilityIdentifier("editor-delete")
+                  .disabled(saving || translating || library.deletingComic)
+                if original.kind == .chapter {
+                  Button("Translate Manga…", systemImage: "character.bubble") {
+                    if let current = session.entities.first(where: { $0.id == original.id && !$0.deleted }) {
+                      translatingChapter = current
+                    }
+                  }
+                  .accessibilityIdentifier("editor-translate-manga")
+                  .disabled(saving || translating || !input.media.contains { $0.kind != "video" })
+                }
+              }
+              Spacer(minLength: 12)
+              cancelButton
+              saveButton.buttonStyle(.borderedProminent)
+            }.controlSize(.large).padding(20)
+          }.background(.bar)
         }
-        ToolbarItem(placement: .confirmationAction) {
-          Button(saving ? "Saving…" : "Save", action: save).disabled(
-            saving || translating || input.title.trimmingCharacters(in: .whitespaces).isEmpty
-          ).keyboardShortcut(.defaultAction)
+        .alert(request.kind == .chapter ? "Delete Chapter?" : "Delete Comic?",
+          isPresented: $confirmingDeletion) {
+          Button("Cancel", role: .cancel) {}
+          Button("Delete", role: .destructive, action: deleteFromEditor)
+        } message: {
+          Text("Delete this " + (request.kind == .chapter ? "chapter? " : "comic and its chapters? ")
+            + "Unsaved edits will be discarded. Comics kept in place will only be removed from the library; their original files stay. Archived files move to Recycle. Files used by other comics are kept.")
         }
-      }
+      #else
+        .toolbar {
+          ToolbarItem(placement: .cancellationAction) { cancelButton }
+          ToolbarItem(placement: .confirmationAction) { saveButton }
+        }
+      #endif
       .sheet(isPresented: $pageOverview) {
         if let original = request.entity,
           let chapter = session.entities.first(where: { $0.id == original.id && !$0.deleted })
@@ -447,9 +500,7 @@ struct MetadataEditor: View {
         request: nested,
         onSave: { created in
           switch created.kind {
-          case .author: input.authorId = created.id
-          case .series: input.seriesId = created.id
-          case .work: input.workId = created.id
+          case .author, .series, .work: parentBinding(created.kind).wrappedValue = created.id
           default: break
           }
         }
@@ -481,6 +532,30 @@ struct MetadataEditor: View {
         height: request.kind == .author ? 460 : request.kind == .storageRoot ? 320 : 720)
     #endif
   }
+  private var cancelButton: some View {
+    Button("Cancel") { dismiss() }.disabled(saving || translating)
+  }
+  private var saveButton: some View {
+    Button(saving ? "Saving…" : "Save", action: save).disabled(
+      saving || translating || !pendingParents.isEmpty
+        || input.title.trimmingCharacters(in: .whitespaces).isEmpty
+    ).keyboardShortcut(.defaultAction)
+  }
+  #if os(macOS)
+    private func deleteFromEditor() {
+      do {
+        guard let current = try currentForSave() else { return }
+        library.requestDeletion(current)
+        guard library.deletionRequest?.id == current.id else {
+          status = library.message?.text ?? "This item cannot be deleted right now."
+          library.message = nil
+          return
+        }
+        library.confirmDeletion()
+        dismiss()
+      } catch { status = error.localizedDescription }
+    }
+  #endif
   #if os(macOS)
     private func mediaLanguageBinding(_ version: MediaVersion) -> Binding<String> {
       Binding(
@@ -531,6 +606,19 @@ struct MetadataEditor: View {
     value.sources.removeAll { $0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     return value
   }
+  private func parentPending(_ kind: EntityKind, _ pending: Bool) {
+    if pending { pendingParents.insert(kind) } else { pendingParents.remove(kind) }
+  }
+  private func parentBinding(_ kind: EntityKind) -> Binding<String?> {
+    Binding(get: {
+      switch kind { case .author: input.authorId; case .series: input.seriesId; default: input.workId }
+    }, set: { id in
+      do {
+        input = try MetadataHierarchy.selecting(kind, id: id, in: input, entities: session.entities)
+        parentPending(kind, false)
+      } catch { status = error.localizedDescription }
+    })
+  }
   private func currentForSave() throws -> LibraryEntity? {
     guard let original = request.entity else { return nil }
     guard let current = session.entities.first(where: { $0.id == original.id && !$0.deleted }),
@@ -549,7 +637,11 @@ struct MetadataEditor: View {
       defer { saving = false }
       do {
         guard owner == session.account?.ownerId else { return }
-        if [.chapter, .work, .series].contains(input.kind), input.authorId == nil {
+        input = try MetadataHierarchy.normalized(input, entities: session.entities)
+        let needsDefaultAuthor = input.kind == .series
+          || input.kind == .work && input.seriesId == nil
+          || input.kind == .chapter && input.workId == nil && input.seriesId == nil
+        if needsDefaultAuthor, input.authorId == nil {
           input.authorId =
             session.entities.first {
               $0.kind == .author && !$0.deleted && $0.title == "other author"

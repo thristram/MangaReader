@@ -25,3 +25,7 @@ revision-checked API update succeeds is the old language folder removed; shared
 sources remain available to other chapters. Existing Pending Organization
 reconciliation completes interrupted corrections. Text locale changes remain
 independent. A single-version chapter keeps its language-free folder.
+
+## Update — 2026-10-22
+
+[ADR 0017](0017-same-volume-organization.md) replaces mandatory copies for exclusive same-volume language/translation organization. Shared and cross-volume sources retain verified copy behavior. New journals keep original metadata and published file identities; metadata-only chapter reassignment still does not move files.

@@ -2,6 +2,98 @@
 
 This records checks actually performed for the first development milestone. It does not claim a completed P0 release or a live production deployment.
 
+## iPhone inline description panel — 2026-10-30
+
+Mac and iPhone builds and project/whitespace checks passed. Native iPhone preview
+checks verified opening from Reader Options, a full-width bottom panel extending
+to the screen edge, no persistent reader/font/status buttons, upward aspect-fit
+media repositioning with no modal dimming, 40% → 63% resizing, title text-size menu,
+tap-image dismissal and downward-grabber dismissal with restored controls.
+Scroll geometry is bounded/enabled with content taller than its viewport;
+continuous finger scrolling remains a device check because the UI tool emitted
+only a single moved touch and no pan-changed events. Temporary geometry/touch probes
+were generated-preview-only and removed afterward. No user library or media was
+used. See [behavior and verification scope](apple/chapter-description-reading-2026-10-29.md).
+
+## Ollama text translation — 2026-10-30
+
+The initial instance returned an empty model list and an explicit missing-model
+404 for `galtransl:7b`. After the user restarted the intended instance, discovery
+found that model. Live production-adapter requests for a synthetic Japanese title
+and multiline description both returned usable Chinese `LocalizedText` results.
+The diagnostic used isolated preferences and did not update library metadata or
+submit private comic text. The earlier authorized local model-registration process
+had completed before re-verification; no additional import was started afterward.
+
+Mac/iPhone builds, project consistency and isolated mocked Ollama checks passed.
+Regression coverage includes missing-model and provider error details, exact model
+names, native API suffix/proxy normalization, empty text/model refusal without
+inference, custom prompt plus JSON contract, invalid output rejection, title-only /
+description-only results and Unicode/newlines. Settings distinguish an empty host
+from an unavailable selected model and clear stale model lists on URL changes.
+See [setup, diagnostics and test scope](apple/ollama-text-translation-2026-10-30.md).
+
+## Chapter description scrolling and text size — 2026-10-29
+
+Mac and iPhone Simulator builds, Xcode project membership and whitespace checks
+passed. Actual isolated native previews with 40 bilingual paragraphs verified the
+bounded Mac bottom pane and iPhone popover reach the last paragraph/source link.
+Text-size controls changed 16 → 20 → 18 pt without hiding the fixed header; reopening
+the iPhone popover retained 18 pt. The iPhone check used a real touch drag in the
+simulator. This UI-only change adds a device-local preference and no database/API
+migration. See [usage and reproducible visual preview](apple/chapter-description-reading-2026-10-29.md).
+
+## Manga translation white placeholders — 2026-10-25
+
+Inspected the user's local manga-image-translator checkout (`c888fdf`) and read the
+running localhost service's OpenAPI schema. Both standard and web-optimized image
+stream routes are advertised. The shared worker resets `_is_streaming_mode` in its
+streaming handler but not its non-streaming handler; a previous web request can
+therefore cause the legacy image API to return a 1×1 white PNG while retaining the
+full result on the service. No provider request or production media was submitted.
+
+Mac build, focused native translation integration and project consistency checks
+passed. Synthetic responses verify standard-stream preference with a white legacy
+response, Custom OpenAI multipart selection, byte-for-byte full PNG preservation,
+progressive six-page commits/retry through streaming, big-endian framing, truncated
+and malformed streams, provider errors, legacy raw-PNG compatibility and no extra
+POST fallback after failures. Placeholders are refused before cache/metadata changes;
+an older persisted uncommitted placeholder also fails safely on Retry, retains its
+cache and sends no new translation request. Existing cache/journal recovery,
+descriptive metadata preservation, PDF rasterization and account cancellation
+regressions pass. Existing committed white pages are deliberately not overwritten;
+see [recovery limits and service-result import](apple/manga-image-translation-2026-10-18.md).
+
+## Author source links — 2026-10-22
+
+Mac and iPhone Simulator builds passed. MangaCore executed 69 tests with zero
+failures and one existing second-volume skip. Native synthetic regressions passed,
+including attribution to the same author from comics and chapters and profile URL
+routing. Xcode project consistency and whitespace checks passed.
+
+Computer-use checks exercised all three locations on both platforms: comic-detail
+Pixiv, Preview Info FANBOX, and a different Authors row's Patreon link. The isolated
+preview captured each expected URL locally instead of contacting external sites.
+Info showed the author name and description while retaining file-location details;
+source taps on Authors kept that page open. iPhone visual review prompted a vertical
+alignment correction beside the comic author. Provider availability, real account
+login and production author records were not used for these checks. See [usage and
+preview capture](apple/author-source-links-2026-10-22.md).
+
+## Chapter reassignment and file organization — 2026-10-22
+
+Both final app builds and the full native synthetic regression passed. MangaCore
+executed 67 tests with zero failures and one second-volume skip. Actual isolated
+Mac UI verified exact-name and dropdown-based chapter reassignment across different
+author/Series parents, including collection refresh and ambiguous-query Save blocking.
+
+A generated 12-file/24-MiB NAS organization completed in 1.324 s with byte equality
+and completed journals; local copy/SHA versus same-volume execution measured
+0.127 s versus 0.023 s. The legacy copy baseline failed on the tested share, so no
+NAS speedup ratio is claimed. Tests touched only disposable generated files, not
+existing manga or production API records. See [details and recovery limits](apple/chapter-reassignment-and-organization-2026-10-22.md)
+and [ADR 0017](adr/0017-same-volume-organization.md).
+
 ## iPhone video presentation rendering — 2026-10-20
 
 The user reported the same black-screen symptom after the startup fix and found
@@ -192,3 +284,149 @@ All review data/media are synthetic in separate preview targets and account cach
 ## 2026-10-18: Mac manga image translation
 
 The native Mac harness covers the upstream multipart/config/locale contract through synthetic HTTP responses; offline enqueue refusal; progressive media slots and original fallback; persisted cache/retry; recovery after metadata failure without translating the cached page again; existing partial translations; malformed PNG refusal; PDF rasterization; and in-flight cancellation/account restore. Native inspection covers the four organization sidebar children, settings fields/Test Connection, unavailable-service confirmation with disabled Translate Manga, chapter-group progress/error/retry, thumbnail collection and zoomable output preview. The locally running `http://localhost:8000` API passed route compatibility through the actual settings Test Connection and its OpenAPI schema. Actual GPU/provider translation quality has not been benchmarked by these fixture tests. Real comic data was not submitted.
+
+## Collection sorting and Mac editor actions — 2026-10-31
+
+- Mac and iPhone Simulator Debug builds passed (`.build/collection-actions-{mac,phone}-build.log`). Apple project generation/membership checks and whitespace checks passed.
+- `MANGA_COLLECTION_CHECKS_ONLY=1 python3 scripts/verify-mac-auth-ui.py .build/xcode-swiftui-mac` passed against production shared sorting code and isolated synthetic metadata. Both All Comics and comic children were checked for all six update/title/author + ascending/descending combinations, localized numeric titles, inherited author attribution and deterministic equal-key reversal. The same fixture checks also run in the existing full Mac/iPhone regression harnesses; the full suites were not rerun for this change.
+- Native Mac synthetic preview: All Comics exposes sort key/order; comic detail exposes Sort chapters. Edit Comic shows Delete left and Cancel/Save right; Edit Chapter shows Delete Chapter then Translate Manga left, Cancel/Save right, all visible at the normal 660-point width. Delete opens a confirmation; Cancel preserves the editor and draft. Translate Manga opens the existing source/options/service-check confirmation sheet. No deletion or paid translation was submitted during visual verification.
+- Native iPhone synthetic preview: All Comics filter offers Update Time/Title/Author and both directions. Choosing Title updates results; the chapter grid uses the same menu, marks the selected key/direction, and switching to Descending visibly reverses Chapter 1/Chapter 2. No real library or source files were modified.
+
+## Import modes, All Pages and unified collection controls — 2026-10-31
+
+- MangaCore tests: 70 tests, 0 failures, 1 existing second-volume skip. The new standalone-image scanner test verifies that selecting a file never scans its siblings.
+- `MANGA_IMPORT_PAGES_CHECKS_ONLY=1 python3 scripts/verify-mac-auth-ui.py .build/xcode-swiftui-mac` passed. Synthetic Additional Pages requests preserve filename order, require a target, leave metadata unchanged before Commit, append to the existing chapter, preserve its text/collection, keep incoming originals and remove only the completed import candidate. Single-image ingress captures its own grant and archives the image inside a chapter folder without moving a sibling. Existing append collision/recreation/recovery, batch editing and Recycle checks also passed.
+- Native import layout checks passed: aligned Chapter Name/Author/Comic field edges, full-page drop destination, fixed footer, single right queue, horizontally scrolling thumbnails and a single form at narrow/wide widths. After a real synthetic file commit, 30 pending folders and 2,000 comic choices remained responsive (15 focus/scroll cycles about 286 ms in this local fixture; not a NAS throughput measurement).
+- Mac fixture UI: compact labeled tile actions; All Pages appears in the normal navigation stack with sidebar/Back; choosing a thumbnail opens the matching reader page. Import's three segments and then-current left-input/right-label layout were inspected (superseded by the label-left correction recorded below). Choosing Additional Pages hides normal metadata fields and opens the shared Add Images commit review without a translation alignment sheet; a synthetic one-page commit completed and cleared the candidate. No real library data was changed.
+- Mac and iPhone Simulator Debug builds passed. The final circular filter uses one shared compact panel; the Mac fixture showed a separate circular toolbar control to the left of system search with Import/Sync at the leading edge. iPhone fixture inspection confirmed the circular top-right filter on All Comics and comic detail, working shared all/unread/tag/sort/direction content, and the Saved Starred/Saved Pages icon switch with its selected state.
+
+
+## All commit paths and import label correction — 2026-10-31
+
+- Both final Mac and iPhone Simulator Debug builds passed. MangaCore: **75 tests,
+  zero failures, one existing second-volume skip**. Apple project membership and
+  whitespace checks passed.
+- The **full** native Mac regression suite passed, including actual synthetic
+  translation organization, Additional Pages, media-language correction, chapter/
+  version/page deletion, shared-source protection, stale revisions, metadata
+  failure recovery and legacy translation recovery. No production API writes.
+- New checks cover source/copy identity guards and modified-byte rejection;
+  same-volume Recycle identities and genuine legacy SHA-only recovery; mutation
+  symlink/traversal refusal; batched candidate canonicalization with fresh symlink
+  resolution; completed-journal scan reuse and replaced/pending record refresh.
+  A NAS timestamp simulation requires a second matching byte inventory and rejects
+  changed content. Import checks after a synthetic commit, with 30 folders and
+  2,000 comic choices, completed 15 focus/scroll cycles in **263 ms** locally.
+- Native Mac preview inspection confirmed **label on the left, textbox on the
+  right**, with aligned Chapter Name/Author/Comic and source-ID textboxes. This
+  replaces the earlier input-left arrangement. No real comic was imported.
+- `scripts/check-commit-performance.swift` compares current independent-copy and
+  Recycle execution with **legacy SHA-only journal replay in the same engine**;
+  this is not an old-binary benchmark. Eight synthetic 2-MiB files, with fixture
+  generation and final byte checks excluded: local copy **0.078 → 0.047 s (1.65×)**;
+  local Recycle **0.022 → 0.006 s (4.02×)**. Every output byte and original-source
+  presence/absence was verified outside the timer. These are single-run fixture
+  measurements, not real-library throughput guarantees.
+- The same synthetic fixture on the existing Finder-mounted NAS confirmed that
+  reading freshly written files can advance mtime; the compatibility path now
+  handles matching bytes. Both legacy and optimized independent-copy attempts
+  then failed in Foundation copy with **Cocoa 513 / POSIX EACCES**, so no NAS copy
+  speedup is claimed. Both Recycle paths passed byte checks: legacy **0.399 s**,
+  identity path **0.893 s**. For these small cached files, additional identity and
+  immediate NAS checkpoint work costs more than the avoided byte reads. NAS rename
+  commits still perform metadata/journal operations; zero media-byte reads does
+  not mean constant time or a universal speedup. No credentials/permissions were
+  changed, and only uniquely named disposable fixture folders were used.
+
+Reproduce the optional benchmark after a Mac build:
+
+```sh
+xcrun swiftc -module-cache-path .build/commit-module-cache -parse-as-library \
+  -I .build/xcode-swiftui-mac/Build/Products/Debug \
+  scripts/check-commit-performance.swift \
+  .build/xcode-swiftui-mac/Build/Products/Debug/MangaCore.o \
+  -o .build/check-commit-performance
+.build/check-commit-performance
+# Optional: supply a mounted test parent with write permission.
+# .build/check-commit-performance /Volumes/YourShare
+```
+
+The benchmark creates/removes only its own unique synthetic directory and temporary
+journals. Failures are reported independently so an unsupported copy does not hide
+Recycle results; incomplete pairs have no ratio and return a failing exit status.
+
+
+## iPhone Preview direct info/description icons — 2026-10-31
+
+The iPhone Simulator Debug build and Apple project/whitespace checks passed.
+An isolated native preview on iPhone 18 Pro / iOS 27 verified two direct icons in
+one top-right capsule for a long description, direct Info opening the author/file
+location sheet, and Description opening the existing resizable inline panel with
+reader controls hidden. Tapping the media restored the controls. A second generated
+fixture with a whitespace-only description showed only circular Info and expanded
+the title into the available space. The empty-description override existed only
+inside the ignored generated preview; production fixtures/data were not changed.
+No server, media movement or database migration is involved.
+
+## Demand-driven synchronization and small mutations — 2026-11-01
+
+- Server: 17 tests, 16 passed and one optional Mongo integration test skipped;
+  TypeScript build/typecheck and formatting passed. Regression coverage includes
+  owner-separated manifest ETags/304, compact selective records, 3-MB deferrals,
+  paginated/projected reads, sparse Mongo CAS updates, invalid patches, inherited
+  NSFW visibility through a deep hierarchy, and gzip responses.
+- MangaCore: 78 tests, zero failures, one existing second-volume skip. A synthetic
+  1,000-page title edit sends a PATCH below 100 bytes; appending one path/count/
+  alignment stays below 350 bytes. Both preserve unchanged paths and reconstruct
+  the complete local chapter from the small receipt. These are fixture payloads,
+  not a measured percentage reduction of production usage.
+- Final Mac and iPhone Simulator Debug builds passed. Native regression checks
+  use an isolated URLProtocol service and synthetic library/files, with no
+  production API writes. They verify single-flight/304, selective chapter/state
+  fetches, no unchanged UI invalidation, five-second progress coalescing, targeted
+  state conflicts, field-specific intent preservation, durable outbox recovery,
+  Retry-After, tombstones/absence, atomic deferred batches, Mac idle refresh,
+  concurrent local receipt preservation and sign-out isolation. The existing
+  full Mac suite also exercises import, translation publication, file-organization
+  recovery and editing through the PATCH fixture endpoint.
+- The additive performance-index migration was applied successfully to the
+  configured Mongo database. Existing unique indexes and metadata/files remain;
+  no document-format conversion occurred. Read-only execution plans for manifest
+  projections examined **zero documents**, returning 1,709 entity stamps and 497
+  state stamps from covering indexes. The measured manifest was **160,721 JSON
+  bytes / 50,138 gzip-level-1 bytes**. The earlier full collection measurement
+  (about 3.34 MB) was BSON storage size, not the old HTTP response's wire size.
+- The published Vercel Express builder packaged the local server successfully:
+  packaged health 200, unauthenticated API 401, no environment files included.
+  Production dependency audit reported zero vulnerabilities. Public checks of
+  the currently hosted API health and auth discovery returned 200; `/v1/me`
+  without credentials correctly returned 401. These checks do not establish
+  that the account's quota pause is fully lifted.
+- New server/client code has **not been deployed** by this verification. Deploy
+  the server first and update both native clients to realize the traffic change;
+  old clients remain compatible but retain old polling. Historical usage cannot
+  be erased by this change. Production CPU/transfer reduction is unmeasured
+  until rollout; no billing plan/account setting was changed.
+
+### Transfer estimate from the current library — 2026-11-01
+
+A subsequent read-only measurement reconstructed the legacy response with the
+same current 1,709 entities and 497 states (749 live chapters): **3,041,338 JSON
+bytes**, or **499,310 bytes at gzip level 6**. The compact full-record representation
+was 1,673,872 JSON bytes / 478,681 gzip-level-1 bytes; the manifest remained 50,138
+gzip-level-1 bytes. This compares serialization, not a production billing trace.
+
+At one full request per 30 seconds, two hours/day over 30 days would transfer
+3.60 GB of compressed response bodies; eight hours/day would transfer 14.38 GB.
+With an existing cache, one fresh process launch and one unchanged idle check/day
+would instead use about 1.6 MB/month for manifests plus an assumed 1-KB overhead
+per check. A fresh process does not retain the previous ETag, so its first manifest
+still has a body. These figures exclude initial bootstrap, changed records, writes,
+auth and other endpoints; actual headers and platform compression can differ.
+One hundred independent local catalog changes/day, each causing a manifest check,
+would add about 150 MB/month of manifest bodies before trigger coalescing.
+
+A synthetic 1,000-page chapter produced title-update requests of **38,079 → 53
+bytes** and page/count/alignment append requests of **38,115 → 224 bytes** using
+the actual MangaCore encoders (99.86% and 99.41% reductions). These are request
+bodies; transport headers and response receipts are additional.

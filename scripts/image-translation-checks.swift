@@ -13,10 +13,21 @@ final class ImageTranslationTestProtocol: URLProtocol, @unchecked Sendable {
   static var responseDelay = 0.0
   private var responseTask: Task<Void, Never>?
   static var payloads: [Data] = []
-  static func configure(result: Data, failure: Int? = nil, badPNG: Bool = false, offline: Bool = false) {
+  static var supportsStream = false
+  static var legacyResult: Data?
+  static var streamPayload: Data?
+  static var requestedPaths: [String] = []
+  static func frame(_ status: UInt8, _ payload: Data) -> Data {
+    var size = UInt32(payload.count).bigEndian
+    return Data([status]) + withUnsafeBytes(of: &size) { Data($0) } + payload
+  }
+  static func configure(result: Data, failure: Int? = nil, badPNG: Bool = false, offline: Bool = false,
+    supportsStream: Bool = false, legacyResult: Data? = nil, streamPayload: Data? = nil) {
     lock.withLock {
       self.result = result; calls = 0; failOnCall = failure; self.badPNG = badPNG
       self.offline = offline; responseDelay = 0; payloads = []
+      self.supportsStream = supportsStream; self.legacyResult = legacyResult
+      self.streamPayload = streamPayload; requestedPaths = []
     }
   }
   static var count: Int { lock.withLock { calls } }
@@ -36,15 +47,24 @@ final class ImageTranslationTestProtocol: URLProtocol, @unchecked Sendable {
     let (status, data, type): (Int, Data, String) = Self.lock.withLock {
       if Self.offline { return (503, Data("{\"detail\":\"Translator unavailable\"}".utf8), "application/json") }
       if request.url!.path.hasSuffix("openapi.json") {
-        return (200, Data("{\"paths\":{\"/translate/with-form/image\":{\"post\":{}}}}".utf8), "application/json")
+        var paths = ["/translate/with-form/image": ["post": [:] as [String: String]]]
+        if Self.supportsStream { paths["/translate/with-form/image/stream"] = ["post": [:]] }
+        return (200, try! JSONSerialization.data(withJSONObject: ["paths": paths]), "application/json")
       }
-      guard request.url!.path == "/api/translate/with-form/image", request.httpMethod == "POST" else {
+      let streaming = request.url!.path == "/api/translate/with-form/image/stream"
+      guard (request.url!.path == "/api/translate/with-form/image" || (streaming && Self.supportsStream)), request.httpMethod == "POST" else {
         return (404, Data(), "application/json")
       }
       Self.calls += 1
       Self.payloads.append(body)
+      Self.requestedPaths.append(request.url!.path)
       if Self.calls == Self.failOnCall { return (503, Data("{\"detail\":\"GPU worker unavailable\"}".utf8), "application/json") }
-      return (200, Self.badPNG ? Data("Not an image".utf8) : Self.result, "image/png")
+      let image = Self.badPNG ? Data("Not an image".utf8) : Self.result
+      if streaming {
+        return (200, Self.streamPayload ?? (Self.frame(3, Data("1".utf8)) + Self.frame(4, Data())
+          + Self.frame(1, Data("rendering_folder:fixture".utf8)) + Self.frame(0, image)), "application/octet-stream")
+      }
+      return (200, Self.legacyResult ?? image, "image/png")
     }
     let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": type])!
     let delay = Self.lock.withLock { Self.responseDelay }
@@ -98,12 +118,54 @@ final class ImageTranslationTestProtocol: URLProtocol, @unchecked Sendable {
     var invalid = options; invalid.boxThreshold = 4
     try check((try? invalid.validate()) == nil, "invalid numeric options accepted")
     try check((try? MangaImageTranslationService(baseURL: "file:///tmp")) == nil, "non-HTTP endpoint accepted")
+    // The user's service leaves its web placeholder flag set on the shared
+    // worker. Only its standard stream endpoint resets that flag per request.
+    let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1, pixelsHigh: 1, bitsPerSample: 8,
+      samplesPerPixel: 3, hasAlpha: false, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    bitmap.setColor(.white, atX: 0, y: 0)
+    let placeholder = bitmap.representation(using: .png, properties: [:])!
+    let client = try MangaImageTranslationService(baseURL: endpoint, session: network)
+    var custom = options; custom.translator = "custom_openai"
+    ImageTranslationTestProtocol.configure(result: png, supportsStream: true, legacyResult: placeholder)
+    let rendered = try await client.translate(image: png, options: custom)
+    try check(rendered == png, "full-image stream did not preserve the rendered PNG")
+    let streamRequest = ImageTranslationTestProtocol.lock.withLock {
+      (ImageTranslationTestProtocol.requestedPaths, ImageTranslationTestProtocol.payloads)
+    }
+    try check(streamRequest.0 == ["/api/translate/with-form/image/stream"], "client chose the sticky web/legacy placeholder endpoint")
+    try check(streamRequest.1[0].range(of: Data("\"translator\":\"custom_openai\"".utf8)) != nil,
+      "custom OpenAI selection was not sent to the service")
+    func rejected(_ operation: () async throws -> Void) async throws -> String {
+      do { try await operation() } catch { return error.localizedDescription }
+      throw LoginError.server("Image translation: invalid service response was accepted")
+    }
+    let frame = ImageTranslationTestProtocol.frame
+    for malformed in [Data(), Data([0, 0]), Data([0, 255, 255, 255, 255]), frame(1, Data("finished".utf8)),
+      frame(9, Data()), frame(0, png) + frame(1, Data()), frame(0, Data("not PNG".utf8)), frame(0, placeholder)] {
+      ImageTranslationTestProtocol.configure(result: png, supportsStream: true, streamPayload: malformed)
+      _ = try await rejected { _ = try await client.translate(image: png, options: custom) }
+      try check(ImageTranslationTestProtocol.count == 1, "invalid stream automatically repeated a paid translation")
+    }
+    ImageTranslationTestProtocol.configure(result: png, supportsStream: true,
+      streamPayload: frame(1, Data("translating".utf8)) + frame(2, Data("Custom provider unavailable".utf8)))
+    let upstreamError = try await rejected { _ = try await client.translate(image: png, options: custom) }
+    try check(upstreamError.contains("Custom provider unavailable"), "stream provider error was hidden")
+    ImageTranslationTestProtocol.configure(result: png, failure: 1, supportsStream: true)
+    _ = try await rejected { _ = try await client.translate(image: png, options: custom) }
+    try check(ImageTranslationTestProtocol.count == 1, "HTTP failure retried the legacy translation endpoint")
+    ImageTranslationTestProtocol.configure(result: placeholder)
+    let placeholderError = try await rejected { _ = try await client.translate(image: png, options: custom) }
+    try check(placeholderError.contains("1×1 placeholder"), "legacy placeholder lacked an actionable error")
+    _ = try await rejected { try await MangaImageTranslationService.validateResult(placeholder) }
+    // Do not mistake a genuine one-pixel source for the known placeholder bug.
+    let tiny = try await client.translate(image: placeholder, options: custom)
+    try check(tiny == placeholder, "a genuine one-pixel source was rejected")
     ImageTranslationTestProtocol.configure(result: png, offline: true)
     do {
       _ = try await queue.enqueue(chapter: chapter, source: original, options: options, baseURL: endpoint, destinationId: root)
       throw LoginError.server("offline service was accepted")
     } catch { try check(queue.jobs.isEmpty && ImageTranslationTestProtocol.count == 0, "offline enqueue changed queue or submitted images") }
-    ImageTranslationTestProtocol.configure(result: png, failure: 2)
+    ImageTranslationTestProtocol.configure(result: png, failure: 2, supportsStream: true, legacyResult: placeholder)
     let id = try await queue.enqueue(chapter: chapter, source: original, options: options, baseURL: endpoint, destinationId: root)
     try await wait { queue.jobs.first { $0.id == id }?.status == "failed" }
     let failed = queue.jobs.first { $0.id == id }!
@@ -173,6 +235,12 @@ final class ImageTranslationTestProtocol: URLProtocol, @unchecked Sendable {
         return plan.entityId == committing.id && plan.phase != "complete"
       }!
     var legacyPlan = try JSONDecoder().decode(OrganizationJournal.self, from: Data(contentsOf: legacyURL))
+    // Real old journals used content digests, not the newer same-volume identity.
+    for index in legacyPlan.files.indices {
+      legacyPlan.files[index].digest = try FileInventory.digest(URL(fileURLWithPath: legacyPlan.files[index].source))
+      legacyPlan.files[index].identity = nil
+      legacyPlan.files[index].allowRename = nil
+    }
     legacyPlan.originalMetadata = nil
     try JSONEncoder().encode(legacyPlan).write(to: legacyURL, options: .atomic)
     NativeUIFixtures.rejectedUpdateIds.remove(committing.id)
@@ -239,6 +307,11 @@ final class ImageTranslationTestProtocol: URLProtocol, @unchecked Sendable {
         return plan.entityId == bilingual.id && plan.phase != "complete"
       }!
     var partialPlan = try JSONDecoder().decode(OrganizationJournal.self, from: Data(contentsOf: partialPlanURL))
+    for index in partialPlan.files.indices {
+      partialPlan.files[index].digest = try FileInventory.digest(URL(fileURLWithPath: partialPlan.files[index].source))
+      partialPlan.files[index].identity = nil
+      partialPlan.files[index].allowRename = nil
+    }
     partialPlan.originalMetadata = nil
     // Match the three real failures: the pending plan omitted one prior success,
     // while the current chapter already has that earlier page. The cached page
@@ -279,6 +352,34 @@ final class ImageTranslationTestProtocol: URLProtocol, @unchecked Sendable {
     try await wait { queue.jobs.first { $0.id == invalidId }?.status == "failed" }
     try check(queue.jobs.first { $0.id == invalidId }?.pages[0].cachedName == nil, "invalid PNG entered translation cache")
     try check(session.entities.first { $0.id == invalidChapter.id }!.media.count == 1, "invalid PNG changed chapter metadata")
+    ImageTranslationTestProtocol.configure(result: placeholder, supportsStream: true)
+    let placeholderId = try await queue.enqueue(chapter: invalidChapter, source: invalidChapter.media[0], options: custom,
+      baseURL: endpoint, destinationId: root)
+    try await wait { queue.jobs.first { $0.id == placeholderId }?.status == "failed" }
+    let rejectedPage = queue.jobs.first { $0.id == placeholderId }!
+    try check(rejectedPage.error.contains("1×1 placeholder") && rejectedPage.pages[0].cachedName == nil,
+      "placeholder was cached or its reason was hidden")
+    try check(session.entities.first { $0.id == invalidChapter.id }!.media.count == 1,
+      "placeholder changed chapter metadata")
+    // Replay a pre-fix uncommitted cached placeholder. Retry must stop before
+    // recovering/writing file metadata, and retain the cache for inspection.
+    var oldJobs = queue.jobs
+    let oldIndex = oldJobs.firstIndex { $0.id == placeholderId }!
+    oldJobs[oldIndex].pages[0].cachedName = placeholderId + "-000001.png"
+    let badCache = queue.outputURL(job: oldJobs[oldIndex], page: oldJobs[oldIndex].pages[0])!
+    let savedQueue = queue.directory!.appendingPathComponent("queue.json")
+    queue.reset()
+    try FileManager.default.createDirectory(at: badCache.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try placeholder.write(to: badCache, options: .atomic)
+    try JSONEncoder().encode(oldJobs).write(to: savedQueue, options: .atomic)
+    ImageTranslationTestProtocol.configure(result: png, supportsStream: true)
+    await queue.restore()
+    queue.retry(placeholderId)
+    try await wait { queue.jobs.first { $0.id == placeholderId }?.status == "failed" }
+    try check(ImageTranslationTestProtocol.count == 0 && FileManager.default.fileExists(atPath: badCache.path),
+      "cached-placeholder recovery submitted another translation or deleted the cache")
+    try check(session.entities.first { $0.id == invalidChapter.id }!.media.count == 1,
+      "old cached placeholder was published on retry")
     let pdf = session.entities.first { $0.id == "c5-1" }!.media[0]
     let pdfURL = try await library.local.url(for: pdf, file: 0)
     let pdfPNG = try await MangaTranslationQueue.png(url: pdfURL, pdfPage: 1)
@@ -305,7 +406,7 @@ final class ImageTranslationTestProtocol: URLProtocol, @unchecked Sendable {
     library.fileQueue.items.append(failedEntry)
     library.fileQueue.removeFailed(failedEntry.id)
     try check(!library.fileQueue.items.contains { $0.id == failedEntry.id }, "failed file task could not be removed")
-    print("PASS: upstream multipart/options/locale contract; offline enqueue blocked; progressive page alignment/fallback; cached previews; persisted retry without retranslation; legacy missing-snapshot recovery through file recovery and queue Retry; newer descriptions/localizations preserved; existing translations preserved; invalid image rejection; PDF rasterization; in-flight cancellation/account restore; failed file queue removal.")
+    print("PASS: standard full-image stream preferred over sticky white placeholders; custom OpenAI contract; strict binary framing/provider errors; no duplicate paid POST fallback; legacy API compatibility; placeholder rejected before cache/metadata; upstream multipart/options/locale contract; offline enqueue blocked; progressive page alignment/fallback; cached previews; persisted retry without retranslation; legacy missing-snapshot recovery through file recovery and queue Retry; newer descriptions/localizations preserved; existing translations preserved; invalid image rejection; PDF rasterization; in-flight cancellation/account restore; failed file queue removal.")
   }
   private static func wait(_ condition: @escaping @MainActor () -> Bool) async throws {
     let limit = Date().addingTimeInterval(40)

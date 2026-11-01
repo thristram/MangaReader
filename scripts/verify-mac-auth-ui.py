@@ -24,7 +24,7 @@ subprocess.run([
     "-F", str(products / "PackageFrameworks"), "-framework", "AMSMB2",
     "-Xlinker", "-rpath", "-Xlinker", str(products / "PackageFrameworks"),
     *map(str, sources), str(root / "scripts/native-ui-fixtures.swift"), str(root / "scripts/verify-mac-auth-ui.swift"), str(root / "scripts/author-removal-checks.swift"), str(root / "scripts/import-responsiveness-checks.swift"), str(root / "scripts/single-file-import-checks.swift"), str(root / "scripts/reader-controls-checks.swift"),
-    str(root / "scripts/page-batch-checks.swift"), str(root / "scripts/image-translation-checks.swift"),
+    str(root / "scripts/page-batch-checks.swift"), str(root / "scripts/image-translation-checks.swift"), str(root / "scripts/ollama-translation-checks.swift"), str(root / "scripts/sync-traffic-checks.swift"),
     str(products / "MangaCore.o"), "-o", str(target / "MacOS/WelcomeChecks"),
 ], check=True)
 info = plistlib.loads((products / "MangaReaderMac.app/Contents/Info.plist").read_bytes())

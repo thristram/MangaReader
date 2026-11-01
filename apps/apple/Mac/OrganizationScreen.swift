@@ -466,73 +466,47 @@ extension LibraryUIModel {
       }
       return updated
     }
-    guard let destination = entity(plan.rootId), destination.isArchiveDestination,
-      let journals = session.cacheDirectory?.appendingPathComponent("commit-journals")
-    else {
+    guard let destination = entity(plan.rootId), destination.isArchiveDestination else {
       throw LoginError.server(
         "Connect this version's archive folder in Media Storage before changing its language.")
     }
     let root = try await local.validateDestinationAsync(destination)
-    let source = try await FileTasks.perform {
-      try PathPolicy.mutationPath(oldDirectory, under: root)
-    }
-    let accessing = root.startAccessingSecurityScopedResource()
-    defer { if accessing { root.stopAccessingSecurityScopedResource() } }
-    // A folder may also back another chapter or another media version. Keep
-    // its originals whenever any such reference still points into that folder.
-    let prefix = source.standardizedFileURL.path.lowercased() + "/"
-    let referencedMedia = session.entities.filter { !$0.deleted }.flatMap { other in
-      other.media.filter { other.id != current.id || $0.id != plan.mediaId }
-    }
-    let referenceRoots = try await local.referenceRoots(for: referencedMedia)
-    let keepSource = try await FileTasks.perform {
-      var roots = [String: URL]()
-      for (id, connected) in referenceRoots {
-        roots[id] = connected.resolvingSymlinksInPath().standardizedFileURL
-      }
-      for media in referencedMedia {
-        try Task.checkCancellation()
-        guard let otherRoot = roots[media.storageRootId] else { continue }
-        if media.relativePaths.contains(where: {
-          otherRoot.appendingPathComponent($0).standardizedFileURL.path.lowercased().hasPrefix(
-            prefix)
-        }) {
-          return true
-        }
-      }
-      return false
-    }
-    let payload = try JSONSerialization.data(withJSONObject: [
-      "entityId": current.id, "revision": current.revision,
-      "sourceRootId": plan.rootId, "destinationRootId": plan.rootId,
-      "metadata": JSONSerialization.jsonObject(with: JSONEncoder().encode(plan.metadata)),
-    ])
-    try await FileTasks.perform {
+    let contents = try await FileTasks.perform {
       _ = try PathPolicy.mutationPath(oldDirectory, under: root)
       let target = try PathPolicy.mutationPath(newDirectory, under: root)
-      guard !FileManager.default.fileExists(atPath: target.path) else {
-        throw StorageError.collision
+      guard !FileManager.default.fileExists(atPath: target.path) else { throw StorageError.collision }
+      var files: [OrganizationFile] = []
+      var cleanup: [EmptyMediaFolder] = []
+      var folders: [String] = []
+      func scan(_ before: String, _ after: String) throws {
+        try Task.checkCancellation()
+        let folder = try PathPolicy.mutationPath(before, under: root)
+        cleanup.append(EmptyMediaFolder(root: root, relativePath: before))
+        folders.append(after)
+        for entry in try FileManager.default.contentsOfDirectory(at: folder,
+          includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]) {
+          let values = try entry.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey])
+          guard values.isSymbolicLink != true else { throw StorageError.unsafePath }
+          let old = before + "/" + entry.lastPathComponent
+          let new = after + "/" + entry.lastPathComponent
+          if values.isDirectory == true { try scan(old, new) }
+          else {
+            guard values.isRegularFile == true else { throw StorageError.unsupportedMove }
+            files.append(OrganizationFile(source: try PathPolicy.mutationPath(old, under: root),
+              relativePath: new, keepSource: false))
+          }
+        }
       }
+      try scan(oldDirectory, newDirectory)
+      return (files, cleanup, folders)
     }
-    guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
     do {
-      let shared = keepSource
-      let receipt = try await FileTasks.perform {
-        try FileCommit.move(
-          source: source, destinationRelativePath: newDirectory, root: root,
-          journalDirectory: journals, recoveryPayload: payload, copyBeforeCommit: true,
-          keepSource: shared)
-      }
-      guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
-      _ = try await local.validateDestinationAsync(destination)
-      try await session.update(current, input: plan.metadata)
-      guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
-      _ = try await local.validateDestinationAsync(destination)
-      try await FileTasks.perform { try FileCommit.finish(receipt, in: journals) }
-      guard let updated = session.entities.first(where: { $0.id == current.id && !$0.deleted })
-      else {
-        throw LoginError.invalidToken
-      }
+      try await organizeChapterFiles(current, destination: destination,
+        metadata: plan.metadata, recomputePaths: false, supplementalFiles: contents.0,
+        cleanupFolders: contents.1, destinationFolders: contents.2)
+      guard owner == session.account?.ownerId,
+        let updated = session.entities.first(where: { $0.id == current.id && !$0.deleted })
+      else { throw LoginError.invalidToken }
       return updated
     } catch {
       throw MediaLanguageCommitFailure(message: error.localizedDescription)

@@ -173,7 +173,7 @@ import MangaCore
     guard let owner = session.account?.ownerId else { throw LoginError.invalidToken }
     let sources = try await FileTasks.perform {
       try Task.checkCancellation()
-      return Set(candidates.map { $0.resolvingSymlinksInPath().standardizedFileURL.path })
+      return try SourceReferenceIndex.canonicalSources(candidates)
     }
     // A sync/edit can arrive while awaiting a NAS. Never authorize a destructive move
     // using an obsolete negative answer; retry, or conservatively retain originals.
@@ -218,6 +218,45 @@ import MangaCore
     }
     return true
   }
+  /// One batched reference check for a chapter operation. Never caches filesystem answers.
+  func sharedSources(_ candidates: [URL], excluding mediaIDs: Set<String>) async throws -> Set<String> {
+    guard let owner = session.account?.ownerId else { throw LoginError.invalidToken }
+    let sources = try await FileTasks.perform {
+      try SourceReferenceIndex.canonicalSources(candidates)
+    }
+    guard !sources.isEmpty else { return [] }
+    for _ in 0..<3 {
+      let generation = session.metadataGeneration
+      let epoch = readingEpoch
+      let index: SourceReferenceIndex
+      if let cached = sourceReferences, cached.owner == owner, cached.generation == generation {
+        index = cached.index
+      } else {
+        let entities = session.entities
+        index = try await FileTasks.perform {
+          SourceReferenceIndex(media: entities.filter { !$0.deleted }.flatMap(\.media))
+        }
+        guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
+        if generation == session.metadataGeneration, epoch == readingEpoch {
+          sourceReferences = (owner, generation, index)
+        }
+      }
+      var shared = Set<String>()
+      for id in index.rootIDs(excluding: mediaIDs) {
+        try Task.checkCancellation()
+        guard let root = try? await readingRootURL(id) else { continue }
+        let found = try await FileTasks.perform {
+          try index.matchingSources(sources, under: root, rootID: id, excluding: mediaIDs)
+        }
+        shared.formUnion(found)
+        guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
+        if shared == sources { return shared }
+      }
+      if generation == session.metadataGeneration, epoch == readingEpoch { return shared }
+    }
+    // Conservatively copy when sync keeps changing the reference graph.
+    return sources
+  }
   func urls(for media: MediaVersion) throws -> [URL] {
     let root = try rootURL(media.storageRootId)
     let marker = try PathPolicy.resolve(LibraryDestinationIdentity.filename, under: root)
@@ -261,30 +300,37 @@ import MangaCore
       return url
     }
   }
-  func archiveFiles(for entity: LibraryEntity, deleting ids: Set<String>) throws -> [ArchiveFile] {
+  func archiveFiles(for entity: LibraryEntity, deleting ids: Set<String>) async throws -> [ArchiveFile] {
     guard let owner = session.account?.ownerId else { throw LoginError.invalidToken }
-    var files: [ArchiveFile] = []
-    for media in entity.media {
-      let paths = ComicDeletionPlan.exclusivePaths(media, deleting: ids, entities: session.entities)
-      // Add-only imports store bare filenames under their source bookmark.
-      // Managed imports store their organized relative folder path.
-      guard !paths.isEmpty else { continue }
-      let root: URL
-      do { root = try rootURL(media.storageRootId) } catch {
-        throw LoginError.server(
-          "Connect this comic’s library folder in Media Storage or Connections before deleting it.")
-      }
-      let marker = try PathPolicy.resolve(LibraryDestinationIdentity.filename, under: root)
-      guard FileManager.default.fileExists(atPath: marker.path) else {
-        throw LoginError.server(
-          "Verify this library folder in Media Storage before recycling its comics.")
-      }
-      try JSONDecoder().decode(LibraryDestinationIdentity.self, from: Data(contentsOf: marker))
-        .validate(libraryId: owner, destinationId: media.storageRootId)
-      files += paths.map {
-        ArchiveFile(root: root, rootId: media.storageRootId, libraryId: owner, relativePath: $0)
+    let entities = session.entities
+    let media = entity.media
+    let paths = try await FileTasks.perform {
+      try Task.checkCancellation()
+      return media.map { ($0.storageRootId, ComicDeletionPlan.exclusivePaths($0, deleting: ids, entities: entities)) }
+        .filter { !$0.1.isEmpty }
+    }
+    var roots: [String: URL] = [:]
+    for id in Set(paths.map { $0.0 }) {
+      do { roots[id] = try await readingRootURL(id) } catch {
+        throw LoginError.server("Connect this comic’s library folder in Media Storage or Connections before deleting it.")
       }
     }
+    let boundRoots = roots
+    let files = try await FileTasks.perform {
+      for (id, root) in boundRoots {
+        try Task.checkCancellation()
+        let marker = try PathPolicy.resolve(LibraryDestinationIdentity.filename, under: root)
+        guard FileManager.default.fileExists(atPath: marker.path) else {
+          throw LoginError.server("Verify this library folder in Media Storage before recycling its comics.")
+        }
+        try JSONDecoder().decode(LibraryDestinationIdentity.self, from: Data(contentsOf: marker))
+          .validate(libraryId: owner, destinationId: id)
+      }
+      return paths.flatMap { id, paths in
+        paths.map { ArchiveFile(root: boundRoots[id]!, rootId: id, libraryId: owner, relativePath: $0) }
+      }
+    }
+    guard owner == session.account?.ownerId else { throw LoginError.invalidToken }
     return files
   }
   func release() {

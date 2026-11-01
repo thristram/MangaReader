@@ -53,6 +53,20 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
   private var webSession: ASWebAuthenticationSession?
   private var refreshTask: Task<StoredCredentials, Error>?
   private var pollTask: Task<Void, Never>?
+  private var syncTask: Task<Void, Error>?
+  private var scheduledSyncTask: Task<Void, Never>?
+  private var idleSyncTask: Task<Void, Never>?
+  private var syncETag: String?
+  private var cachedAPI: (epoch: UUID, owner: String?, client: APIClient)?
+  private var automaticRefreshEnabled = false
+  private var appIsActive = true
+  private var lastActivity = Date()
+  private var lastIdleArm = Date.distantPast
+  private var nextSyncAllowedAt = Date.distantPast
+  private var syncFailures = 0
+  var flushReadingState: (() -> Void)?
+  var persistReadingState: (() async -> Void)?
+  private var localCacheTask: Task<Void, Never>?
   private var epoch = UUID()
   private let cacheRoot: URL?
   private let providedAPI: APIClient?
@@ -66,12 +80,15 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
     let config = AppConfiguration.current()
     let generation = epoch
     let owner = account?.ownerId
-    return APIClient(
+    if let cachedAPI, cachedAPI.epoch == generation, cachedAPI.owner == owner { return cachedAPI.client }
+    let client = APIClient(
       base: config.apiURL,
       token: { [weak self] in
         guard let self else { throw LoginError.invalidToken }
         return try await self.scopedAccessToken(owner: owner, generation: generation)
       })
+    cachedAPI = (generation, owner, client)
+    return client
   }
   private func scopedAccessToken(owner: String?, generation: UUID) async throws -> String {
     guard owner != nil, generation == epoch, owner == account?.ownerId else {
@@ -249,7 +266,7 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
         account = verified
         loadCache()
         try await synchronize()
-        startPolling()
+        startAutomaticRefresh()
       } catch {
         guard epoch == attempt else { return }
         webSession = nil
@@ -286,7 +303,7 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
         account = verified
         loadCache()
         try await synchronize()
-        startPolling()
+        startAutomaticRefresh()
       } catch {
         guard epoch == attempt else { return }
         credentials = nil
@@ -339,32 +356,109 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
       throw error
     }
   }
-  func synchronize() async throws {
+  /// Single-flight and owner-scoped. A manifest has no media paths/descriptions;
+  /// only changed records are fetched. A failed batch never publishes half a sync.
+  func synchronize(force: Bool = false) async throws {
+    guard account != nil else { return }
+    if let task = syncTask { return try await task.value }
+    if !force && Date() < nextSyncAllowedAt {
+      throw APIError(status: 429, retryAfter: nextSyncAllowedAt.timeIntervalSinceNow,
+        message: "Sync is temporarily delayed after an error. Retry later or use Sync to check again.")
+    }
+    let generation = epoch
+    let task = Task { try await self.performSync() }
+    syncTask = task
+    defer { if generation == epoch { syncTask = nil } }
+    do {
+      try await task.value
+      if generation == epoch { syncFailures = 0; nextSyncAllowedAt = .distantPast }
+    } catch {
+      if generation == epoch, !(error is CancellationError) {
+        syncFailures += 1
+        let delay = max((error as? APIError)?.retryAfter ?? 0, min(900, 30 * pow(2, Double(min(syncFailures - 1, 5)))))
+        nextSyncAllowedAt = Date().addingTimeInterval(delay)
+      }
+      throw error
+    }
+  }
+  private func performSync() async throws {
     guard let owner = account?.ownerId else { return }
     let generation = epoch
-    let initialEntities = Set(entities.map(\.id))
-    let initialStates = Set(states.map(\.id))
-    let snapshot = try await api.snapshot()
-    guard snapshot.schemaVersion == 1 else {
-      throw LoginError.server("Unsupported metadata schema. Update the app before syncing.")
+    let initialEntities = Set(entities.map(\.id)), initialStates = Set(states.map(\.id))
+    let client = api
+    var snapshot: SyncSnapshot
+    var manifest: SyncManifest?
+    var etag: String?
+    do {
+      let result = try await client.manifest(etag: syncETag)
+      guard let value = result.value else {
+        guard account?.ownerId == owner, generation == epoch else { return }
+        status = "Library is up to date"; return
+      }
+      guard value.schemaVersion == 2 else { throw LoginError.server("Unsupported sync manifest") }
+      manifest = value; etag = result.etag
+      let revisions = Dictionary(entities.map { ($0.id, $0.revision) }, uniquingKeysWith: max)
+      let stateRevisions = Dictionary(states.map { ($0.id, $0.revision) }, uniquingKeysWith: max)
+      var entityIDs = value.entities.filter { revisions[$0.id, default: 0] < $0.revision }.map(\.id)
+      var stateIDs = value.states.filter { stateRevisions[$0.id, default: 0] < $0.revision }.map(\.id)
+      if entityIDs.isEmpty && stateIDs.isEmpty && Set(value.entities.map(\.id)) == initialEntities && Set(value.states.map(\.id)) == initialStates {
+        guard account?.ownerId == owner, generation == epoch else { return }
+        syncETag = etag; status = "Library is up to date"; return
+      }
+      var changedEntities: [LibraryEntity] = [], changedStates: [PersonalState] = []
+      while !entityIDs.isEmpty || !stateIDs.isEmpty {
+        try Task.checkCancellation()
+        let selectedEntities = Array(entityIDs.prefix(100)), selectedStates = Array(stateIDs.prefix(100))
+        let batch = try await client.records(entities: selectedEntities, states: selectedStates)
+        guard batch.schemaVersion == 1 else { throw LoginError.server("Unsupported record schema") }
+        changedEntities += batch.entities; changedStates += batch.states
+        let deferredEntities = batch.remainingEntities ?? [], deferredStates = batch.remainingStates ?? []
+        guard Set(deferredEntities).isSubset(of: Set(selectedEntities)), Set(deferredStates).isSubset(of: Set(selectedStates)),
+          deferredEntities.count + deferredStates.count < selectedEntities.count + selectedStates.count
+        else { throw LoginError.server("Sync batch made no progress") }
+        entityIDs.removeFirst(selectedEntities.count); stateIDs.removeFirst(selectedStates.count)
+        entityIDs.insert(contentsOf: deferredEntities, at: 0); stateIDs.insert(contentsOf: deferredStates, at: 0)
+      }
+      // Manifest absence is authoritative only for records present at the start.
+      // Preserve a local write that completed while a request was in flight.
+      let remoteEntities = Set(value.entities.map(\.id)), remoteStates = Set(value.states.map(\.id))
+      snapshot = SyncSnapshot(schemaVersion: 1,
+        entities: entities.filter { remoteEntities.contains($0.id) || !initialEntities.contains($0.id) },
+        states: states.filter { remoteStates.contains($0.id) || !initialStates.contains($0.id) })
+      let currentIDs = Set(entities.map(\.id)), currentStateIDs = Set(states.map(\.id))
+      for item in changedEntities {
+        if initialEntities.contains(item.id) && !currentIDs.contains(item.id) { continue }
+        if let i = snapshot.entities.firstIndex(where: { $0.id == item.id }) {
+          if snapshot.entities[i].revision <= item.revision { snapshot.entities[i] = item }
+        } else { snapshot.entities.append(item) }
+      }
+      for item in changedStates {
+        if initialStates.contains(item.id) && !currentStateIDs.contains(item.id) { continue }
+        if let i = snapshot.states.firstIndex(where: { $0.id == item.id }) {
+          if snapshot.states[i].revision <= item.revision { snapshot.states[i] = item }
+        } else { snapshot.states.append(item) }
+      }
+    } catch let error as APIError where [404,405].contains(error.status) && error.code == nil {
+      // Rolling upgrade only: old servers retain their explicit bootstrap route.
+      snapshot = try await client.snapshot()
     }
+    guard snapshot.schemaVersion == 1 else { throw LoginError.server("Unsupported metadata schema. Update the app before syncing.") }
     guard account?.ownerId == owner, generation == epoch else { return }
-    // A snapshot started before a page commit may arrive after that commit's
-    // response. Reconcile by revision rather than rolling the library back.
     var merged = snapshot
-    merged.entities = Self.mergeSnapshot(snapshot.entities, current: entities, initialIDs: initialEntities,
-      id: { $0.id }, revision: { $0.revision })
-    merged.states = Self.mergeSnapshot(snapshot.states, current: states, initialIDs: initialStates,
-      id: { $0.id }, revision: { $0.revision })
-    entities = merged.entities
-    states = merged.states
+    if manifest == nil {
+      merged.entities = Self.mergeSnapshot(snapshot.entities, current: entities, initialIDs: initialEntities,
+        id: { $0.id }, revision: { $0.revision })
+      merged.states = Self.mergeSnapshot(snapshot.states, current: states, initialIDs: initialStates,
+        id: { $0.id }, revision: { $0.revision })
+    }
+    entities = merged.entities; states = merged.states
     if let dir = cacheDirectory {
       cacheWriteSequence &+= 1
       try await snapshotWriter.save(merged, to: dir, sequence: cacheWriteSequence)
       guard account?.ownerId == owner, generation == epoch else { return }
     }
-    status = "Library synced"
-    onChange?()
+    if manifest != nil { syncETag = etag }
+    status = "Library synced"; onChange?()
   }
   private static func mergeSnapshot<Item>(_ incoming: [Item], current: [Item], initialIDs: Set<String>,
     id: (Item) -> String, revision: (Item) -> Int) -> [Item] {
@@ -392,18 +486,86 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
     entities = snapshot.entities
     states = snapshot.states
   }
-  private func startPolling() {
+  func startAutomaticRefresh() {
+    automaticRefreshEnabled = true
+    #if os(macOS)
+      noteActivity()
+    #else
+      resumePhonePolling()
+    #endif
+  }
+  /// Mac: one refresh per long idle period, never a recurring 30-second poll.
+  func noteActivity(now: Date = Date()) {
+    let returningFromIdle = now.timeIntervalSince(lastActivity) >= 600
+    lastActivity = now
+    guard automaticRefreshEnabled else { return }
+    if returningFromIdle { scheduleRefresh(delay: 0) }
+    guard now.timeIntervalSince(lastIdleArm) >= 5 else { return }
+    lastIdleArm = now
+    idleSyncTask?.cancel()
+    idleSyncTask = Task { [weak self] in
+      try? await Task.sleep(for: .seconds(600))
+      guard !Task.isCancelled, let self else { return }
+      // Activity within the coalescing window must not count as a full idle period.
+      let remaining = 600 - Date().timeIntervalSince(self.lastActivity)
+      if remaining > 0 { try? await Task.sleep(for: .seconds(remaining)) }
+      guard !Task.isCancelled else { return }
+      do { try await self.synchronize() } catch { self.status = error.localizedDescription }
+    }
+  }
+  func setAppActive(_ active: Bool) {
+    appIsActive = active
+    if !active { pollTask?.cancel(); pollTask = nil; flushReadingState?() }
+    #if os(iOS)
+      if active, automaticRefreshEnabled {
+        scheduleRefresh(delay: 0)
+        resumePhonePolling()
+      }
+    #else
+      if active { noteActivity() }
+    #endif
+  }
+  private func resumePhonePolling() {
+    guard appIsActive else { return }
     pollTask?.cancel()
     pollTask = Task { [weak self] in
       while !Task.isCancelled {
-        try? await Task.sleep(for: .seconds(30))
-        guard !Task.isCancelled else { return }
-        do { try await self?.synchronize() } catch {
-          self?.status = error.localizedDescription
-          self?.onChange?()
-        }
+        try? await Task.sleep(for: .seconds(120))
+        guard !Task.isCancelled, let self, self.appIsActive else { return }
+        do { try await self.synchronize() } catch { self.status = error.localizedDescription }
       }
     }
+  }
+  private func scheduleRefresh(delay: TimeInterval = 2) {
+    guard automaticRefreshEnabled else { return }
+    scheduledSyncTask?.cancel()
+    scheduledSyncTask = Task { [weak self] in
+      try? await Task.sleep(for: .seconds(delay))
+      guard !Task.isCancelled, let self else { return }
+      self.scheduledSyncTask = nil
+      do { try await self.synchronize() } catch { self.status = error.localizedDescription }
+    }
+  }
+  private func saveLocalCacheSoon() {
+    localCacheTask?.cancel()
+    let owner = account?.ownerId, generation = epoch
+    localCacheTask = Task { [weak self] in
+      try? await Task.sleep(for: .seconds(2))
+      guard !Task.isCancelled, let self, self.account?.ownerId == owner, self.epoch == generation,
+        let directory = self.cacheDirectory else { return }
+      self.cacheWriteSequence &+= 1
+      do { try await self.snapshotWriter.save(SyncSnapshot(schemaVersion: 1, entities: self.entities, states: self.states), to: directory, sequence: self.cacheWriteSequence) }
+      catch { self.status = error.localizedDescription }
+    }
+  }
+  func reloadState(entity: String, page: Int?) async throws {
+    let owner = account?.ownerId
+    let value = try await api.personalState(entity: entity, page: page)
+    guard owner == account?.ownerId else { throw LoginError.invalidToken }
+    if let value {
+      if let index = states.firstIndex(where: { $0.entityId == entity && $0.pageIndex == page }) { states[index] = value }
+      else { states.append(value) }
+    } else { states.removeAll { $0.entityId == entity && $0.pageIndex == page } }
   }
   func signOut() {
     epoch = UUID()
@@ -412,6 +574,12 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
     webSession = nil
     pollTask?.cancel()
     pollTask = nil
+    syncTask?.cancel(); syncTask = nil
+    scheduledSyncTask?.cancel(); scheduledSyncTask = nil
+    idleSyncTask?.cancel(); idleSyncTask = nil
+    localCacheTask?.cancel(); localCacheTask = nil
+    syncETag = nil; cachedAPI = nil; automaticRefreshEnabled = false; lastIdleArm = .distantPast
+    nextSyncAllowedAt = .distantPast; syncFailures = 0
     refreshTask?.cancel()
     refreshTask = nil
     CredentialKeychain.clear()
@@ -432,6 +600,7 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
     if let i = entities.firstIndex(where: { $0.id == entity.id }) {
       if entity.revision >= entities[i].revision { entities[i] = entity }
     } else { entities.append(entity) }
+    saveLocalCacheSoon(); scheduleRefresh()
     onChange?()
     return entity
   }
@@ -442,6 +611,7 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
     if let i = entities.firstIndex(where: { $0.id == entity.id }), updated.revision >= entities[i].revision {
       entities[i] = updated
     }
+    saveLocalCacheSoon(); scheduleRefresh()
     onChange?()
   }
   func delete(_ entity: LibraryEntity) async throws {
@@ -450,6 +620,7 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
     guard account?.ownerId == owner else { throw LoginError.invalidToken }
     entities.removeAll { $0.id == entity.id }
     states.removeAll { $0.entityId == entity.id }
+    saveLocalCacheSoon(); scheduleRefresh()
     onChange?()
   }
   func deleteTag(_ tag: LibraryEntity) async throws {

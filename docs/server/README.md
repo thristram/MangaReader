@@ -14,8 +14,8 @@ cp apps/server/.env.example apps/server/.env
 Fill `MONGODB_URI`, `MONGODB_DATABASE`, `AUTH_ISSUER`, `AUTH_JWKS_URL`, `MANGA_API_AUDIENCE`. No secrets are committed. Git ignores real `.env*` / `*.env` files, Vercel local state and private signing material; only sanitized `*.env.example` files are tracked. Copy the sample locally and enter credentials there or in Vercel Environment Variables. Native apps must use the same canonical issuer/API resource. Optional introspection client values are confidential **API-server** credentials, not Mac/iPhone credentials.
 
 ```sh
-npm run db:migrate                 # describes v1 indexes; no database connection/write
-npm run db:migrate -- --apply      # applies idempotent v1 indexes after backup
+npm run db:migrate                 # describes base and performance indexes; no database connection/write
+npm run db:migrate -- --apply      # applies idempotent indexes after backup
 npm run dev
 ```
 
@@ -64,7 +64,7 @@ MONGODB_TEST_URI=mongodb://127.0.0.1:27383 npm test
 
 Back up before migration; [shared migration guide](../data-migration.md) covers steps and rollback. Index migration defaults to dry run. Do not drop owner indexes or globally deduplicate IDs without including ownerId.
 
-API responses use `Cache-Control: no-store`. Error logs intentionally avoid token/credential/request-body dumps. Monitor status codes, database connection failures and revision conflicts. The bootstrap snapshot is limited to 10,000 entities/states; transactional incremental sync, idempotent mutation receipts, rate limits and durable file-plan metadata remain release work. No in-memory global sync cursor is used in a serverless environment.
+API responses use `Cache-Control: no-store`. Error logs intentionally avoid token/credential/request-body dumps. Monitor status codes, database connection failures and revision conflicts. The bootstrap snapshot is limited to 10,000 entities/states; transactional change streams, idempotent mutation receipts, server rate limits and durable file-plan metadata remain release work. Current clients use revision manifests/selective records and small PATCHes; no-change replies are 304. No in-memory global sync cursor is used in a serverless environment.
 
 See [server specification](spec.md), [requirements](requirements.md), [auth integration](auth-integration.md) and [API contract](../api-contract.md).
 
@@ -73,3 +73,19 @@ References: [Vercel Express](https://vercel.com/docs/frameworks/backend/express)
 Latest live check: [deployment verification — 2026-10-13](deployment-verification-2026-10-13.md), including the reserved-entrypoint correction and database readiness findings.
 
 Mac manga image translation calls a separately configured GPU/image service directly. This metadata server requires no translator URL, provider credentials, new deployment settings or database migration. It stores normal media-version metadata after each successful page commit. See [Apple image translation setup](../apple/manga-image-translation-2026-10-18.md).
+
+
+## Selective sync and rollout (2026-11-01)
+
+Deploy the server before updating native apps. Existing v1 routes remain usable;
+older apps still have the former traffic pattern. No new environment values,
+OAuth resources, collections or document conversions are required. Run the index
+migration against the intended database to add covered owner manifests and
+paginated kind/work/author/state selectors. Retain all unique owner indexes.
+
+See [API extension](../api-contract.md#selective-sync-and-small-mutations--2026-11-01)
+for batches, ETags, compact paths, PATCH receipts and pagination. Authenticated
+responses remain no-store: never use public cache/s-maxage for user metadata.
+Gzip supplements smaller payloads; all comic bytes continue travelling directly
+between devices and storage. Monitor 304/200/409/429/5xx counts, response bytes and
+per-route CPU after rollout. The optimization cannot remove already accrued usage.
