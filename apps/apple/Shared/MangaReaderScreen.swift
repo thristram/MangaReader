@@ -535,12 +535,9 @@ struct ReaderChapterDescription: View {
           }
         }
       ScrollView(.vertical) {
-        VStack(alignment: .leading, spacing: 12) {
-          Text(description)
-            .font(.system(size: fontSize * scaledDefaultSize / 16))
-            .foregroundStyle(.secondary).textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        LazyVStack(alignment: .leading, spacing: 12) {
+          CachedDescription(text: description, font: .system(size: fontSize * scaledDefaultSize / 16))
+            .foregroundStyle(.secondary)
           SourceLinksView(links: sources)
         }.frame(maxWidth: .infinity, alignment: .leading)
       }.scrollBounceBehavior(.basedOnSize)

@@ -139,6 +139,7 @@ struct DownloadActivity: Identifiable {
   private var mediaRequests: [String: MediaRequest] = [:]
   private let coverPermits = AsyncPermitPool(limit: 2)
   private var availabilityUpdate: Task<Void, Never>?
+  lazy var textTranslations = TextTranslationQueue(library: self)
   #if os(macOS)
     lazy var pendingJournalIndex = PendingFileJournalIndex()
     lazy var fileQueue = ImportFileQueue(library: self)
@@ -205,6 +206,8 @@ struct DownloadActivity: Identifiable {
     #endif
   }
   func reset() {
+    textTranslations.reset()
+    Task { await DescriptionTextCache.shared.removeAll() }
     availabilityUpdate?.cancel()
     availabilityUpdate = nil
     mediaRequests.values.forEach { $0.task.cancel() }

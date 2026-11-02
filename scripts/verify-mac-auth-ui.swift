@@ -52,6 +52,7 @@ import SwiftUI
     }
     if ProcessInfo.processInfo.environment["MANGA_OLLAMA_CHECKS_ONLY"] == "1" {
       try await OllamaTranslationChecks.run()
+      try await TextTranslationChecks.run(directory: directory.appendingPathComponent("text-jobs"))
       return
     }
     if ProcessInfo.processInfo.environment["MANGA_READER_CONTROLS_ONLY"] == "1" {
@@ -788,6 +789,7 @@ import SwiftUI
     try await PageBatchChecks.run(directory: directory.appendingPathComponent("page-batch"))
     try await ImageTranslationChecks.run(directory: directory.appendingPathComponent("image-translation"))
     try await OllamaTranslationChecks.run()
+    try await TextTranslationChecks.run(directory: directory.appendingPathComponent("text-jobs"))
     print(
       "PASS: asynchronous single-file cover despite missing unrelated page; per-page cache and reuse without original source; reader opens without whole-chapter file scan; background import survives UI closure and snapshots metadata; translation relocates both languages before source cleanup; nested image/PDF batch moves share selected parent bookmark; add-only nested paths reopen after source release; single chapter deletion preserves siblings and parent; real cross-volume import/API commit/recycle when test volume is provided; unarchived comic deletion preserving originals; archived comic recycling; shared-file protection; API failure restores files; tag rename/delete without deleting comics; destination removal without losing media; download queue/progress/failure/retry; native pager first layout/resize; SwiftUI account gating/reset; NSFW, history, collections, author search and tag filters; build endpoint policy; retryable sign-in error. No server calls."
     )

@@ -128,6 +128,70 @@ function fixture() {
   );
   return { repo, app };
 }
+test("novel descriptions save through PATCH/PUT and sync; limits are explicit and atomic", async () => {
+  const { app, repo } = fixture();
+  const entity = await chapter(app);
+  const novel = "雨".repeat(34592);
+  await request(app)
+    .patch(`/v1/entities/${entity.id}`)
+    .auth("alice", { type: "bearer" })
+    .set("If-Match", "1")
+    .send([{ op: "replace", path: "/description", value: novel }])
+    .expect(200);
+  const stored = repo.docs.get("alice" + entity.id)!;
+  assert.equal(stored.description, novel);
+  const body = {
+    ...stored,
+    localizations: { zh: { description: novel } },
+  } as Record<string, unknown>;
+  for (const key of ["id", "ownerId", "revision", "updatedAt", "deleted"])
+    delete body[key];
+  await request(app)
+    .put(`/v1/entities/${entity.id}`)
+    .auth("alice", { type: "bearer" })
+    .set("If-Match", "2")
+    .send(body)
+    .expect(200);
+  const synced = await request(app)
+    .post("/v1/sync/records")
+    .auth("alice", { type: "bearer" })
+    .send({ entities: [entity.id], states: [] })
+    .expect(200);
+  assert.equal(synced.body.entities[0].description.length, 34592);
+  assert.equal(synced.body.entities[0].localizations.zh.description, novel);
+  for (const path of ["/description", "/localizations/zh/description"]) {
+    const rejected = await request(app)
+      .patch(`/v1/entities/${entity.id}`)
+      .auth("alice", { type: "bearer" })
+      .set("If-Match", "3")
+      .send([{ op: "replace", path, value: "文".repeat(500001) }])
+      .expect(400);
+    assert.match(rejected.body.error.message, /500,000/);
+  }
+  assert.equal(repo.docs.get("alice" + entity.id)!.revision, 3);
+  // Two large Japanese fields exceed the former HTTP parser limit, but fit
+  // within the explicit document budget and remain retrievable by sync.
+  const large = "文".repeat(350000);
+  await request(app)
+    .patch(`/v1/entities/${entity.id}`)
+    .auth("alice", { type: "bearer" })
+    .set("If-Match", "3")
+    .send([
+      { op: "replace", path: "/description", value: large },
+      { op: "replace", path: "/localizations/zh/description", value: large },
+    ])
+    .expect(200);
+  const rejected = await request(app)
+    .patch(`/v1/entities/${entity.id}`)
+    .auth("alice", { type: "bearer" })
+    .set("If-Match", "4")
+    .send([
+      { op: "add", path: "/localizations/fr", value: { description: large } },
+    ])
+    .expect(400);
+  assert.match(rejected.body.error.message, /2.8 MB/);
+  assert.equal(repo.docs.get("alice" + entity.id)!.revision, 4);
+});
 async function chapter(app: ReturnType<typeof createApp>) {
   const author = (
     await request(app)

@@ -48,7 +48,7 @@ const errors = Object.fromEntries(
           403: "Insufficient scope",
           404: "Unavailable in this account",
           409: "Stale revision or referenced entity",
-          413: "Body exceeds 2 MB",
+          413: "Body exceeds 4 MB",
           422: "Invalid relationship or page",
           428: "If-Match required",
           500: "Internal error",

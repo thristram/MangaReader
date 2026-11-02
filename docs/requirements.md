@@ -110,3 +110,11 @@ refresh. Translation and other metadata updates use small revision-checked reque
 reading progress is coalesced with durable owner-local pending intentions, targeted
 conflict reload and rate-limit backoff. Preserve deletion/account isolation and
 explicit file commits. See [ADR 0018](adr/0018-demand-driven-sync-and-small-mutations.md).
+
+
+### Long descriptions and text translation — 2026-11-02
+
+- TEXT-01: Save original/localized novel descriptions above 34,592 Japanese characters; enforce documented bounded field/document/request limits with actionable errors.
+- TEXT-02: Opening media must not wait for full-novel layout. Cache account-scoped display blocks off the UI actor, render lazily and preserve scrolling/font controls.
+- TEXT-03: Split text at `[chapter:NAME]`, then whole paragraphs/sentences; configure a global character limit for every model. Preserve order/Unicode/whitespace and fail explicitly for an unfit sentence/token budget.
+- TEXT-04: Title/description translation queues asynchronous, locally durable jobs with completed/total chunks, cancel/retry, resumable outputs and plain model output. Publish only the complete target field, preserving original/media/unrelated edits and guarding accounts/revisions.

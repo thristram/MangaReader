@@ -39,7 +39,7 @@ if args.long_description:
     fixture = app / "Shared/NativeUIFixtures.swift"
     paragraphs = ["Beginning of chapter description."] + [
         f"Paragraph {i}. The rain has stopped, and the journey continues. A long description should remain readable at every text size. 长篇章节描述可以上下滚动。"
-        for i in range(1, 41)
+        for i in range(1, 301)
     ] + ["End of chapter description."]
     fixture.write_text(fixture.read_text().replace(
         '"An unexpected reunion by the station after the rain."',

@@ -89,3 +89,9 @@ responses remain no-store: never use public cache/s-maxage for user metadata.
 Gzip supplements smaller payloads; all comic bytes continue travelling directly
 between devices and storage. Monitor 304/200/409/429/5xx counts, response bytes and
 per-route CPU after rollout. The optimization cannot remove already accrued usage.
+
+
+Novel descriptions require the updated API validation (500,000 UTF-16 code units
+per field, 2.8-MB complete metadata, 4-MB HTTP body). Deploy this server before
+using long-novel clients; existing Mongo data/indexes and env configuration remain
+valid. Text inference/jobs run on the native client, never on Vercel.

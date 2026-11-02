@@ -58,7 +58,7 @@ private final class OllamaTestProtocol: URLProtocol, @unchecked Sendable {
       do { try await operation() } catch { return error.localizedDescription }
       throw LoginError.server("Ollama regression: expected failure was accepted")
     }
-    let output = ["message": ["content": "{\"title\":\"雨\",\"description\":\"\"}"], "done": true] as [String: Any]
+    let output = ["message": ["content": "雨"], "done": true] as [String: Any]
     for (host, path) in [("https://ollama-fixtures.invalid", "/api/chat"),
       ("https://ollama-fixtures.invalid/api/", "/api/chat"),
       (" https://ollama-fixtures.invalid/proxy/api/chat/ ", "/proxy/api/chat"),
@@ -72,9 +72,9 @@ private final class OllamaTestProtocol: URLProtocol, @unchecked Sendable {
       let payload = try JSONSerialization.jsonObject(with: calls[0].1) as! [String: Any]
       let messages = payload["messages"] as! [[String: String]]
       try check(payload["model"] as? String == "galtransl:7b" && payload["stream"] as? Bool == false
-        && payload["format"] as? String == "json", "Ollama chat contract changed")
+        && payload["format"] == nil, "Ollama chat contract changed")
       try check(messages[0]["content"]!.contains("Translate Japanese fiction faithfully.")
-        && messages[0]["content"]!.contains("JSON object"), "custom prompt or structured output instructions lost")
+        && messages[0]["content"]!.contains("Return only translated text"), "custom prompt or plain-text instructions lost")
     }
     defaults.set("https://ollama-fixtures.invalid", forKey: "OllamaURL")
     try OllamaTestProtocol.configure(404, ["error": "model 'galtransl:7b' not found"])
@@ -112,20 +112,27 @@ private final class OllamaTestProtocol: URLProtocol, @unchecked Sendable {
     }
     try check(OllamaTestProtocol.lock.withLock { OllamaTestProtocol.requests.isEmpty }, "invalid endpoint sent text")
     defaults.set("https://ollama-fixtures.invalid", forKey: "OllamaURL")
-    try OllamaTestProtocol.configure(200, ["message": ["content": "not JSON"]])
+    try OllamaTestProtocol.configure(200, ["message": ["content": "Plain text — no JSON required"]])
+    let plain = try await translate()
+    try check(plain.title == "Plain text — no JSON required", "plain model output was not accepted")
+    try OllamaTestProtocol.configure(200, ["message": ["content": " "]])
     let malformed = try await rejected { _ = try await translate() }
-    try check(malformed.contains("valid JSON"), "malformed model output error was opaque")
+    try check(malformed.contains("no text"), "empty model output error was opaque")
+    try OllamaTestProtocol.configure(200, ["message": ["content": "partial"], "done_reason": "length"])
+    let truncated = try await rejected { _ = try await translate() }
+    try check(truncated.contains("token limit"), "truncated output was accepted")
     let long = String(repeating: "雨の帰り道。\n", count: 200)
-    try OllamaTestProtocol.configure(200, ["message": ["content": "{\"description\":\"回家的路。\"}"]])
+    try OllamaTestProtocol.configure(200, ["message": ["content": "回家的路。"]])
     let description = try await translate("", long)
-    try check(description.description == "回家的路。", "description-only response required a title")
+    try check(description.description == "回家的路。\n", "description-only response required a title")
     let body = OllamaTestProtocol.lock.withLock { OllamaTestProtocol.requests[0].1 }
     let object = try JSONSerialization.jsonObject(with: body) as! [String: Any]
     let message = (object["messages"] as! [[String: String]])[1]["content"]!
-    let source = message.components(separatedBy: "Source JSON: ")[1].data(using: .utf8)!
-    let original = try JSONSerialization.jsonObject(with: source) as! [String: String]
-    try check(original["description"] == long,
-      "description lost Unicode/newlines before submission")
-    print("PASS: Ollama missing-model/error bodies; native URL normalization; model discovery; custom prompt/JSON contract; empty-source refusal; title/description translation; Unicode/newlines; no implicit retry/download/provider fallback.")
+    try check(message == long.trimmingCharacters(in: .whitespacesAndNewlines),
+      "description lost internal Unicode/newlines before submission")
+    let options = object["options"] as! [String: Int]
+    try check(options["num_ctx"] == 16384 && options["num_predict"] == 4096,
+      "shared model token settings were not applied")
+    print("PASS: Ollama missing-model/error bodies; native URL normalization; model discovery; custom prompt/plain-text contract and token options; empty-source refusal; title/description translation; Unicode/newlines; no implicit retry/download/provider fallback.")
   }
 }

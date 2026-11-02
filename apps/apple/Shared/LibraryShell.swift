@@ -33,9 +33,13 @@ struct MangaRootScreen: View {
     #if os(macOS)
       .task(id: session.account?.ownerId) { await library.translationQueue.restore() }
     #endif
-    .task(id: session.account?.ownerId) { await library.restoreStateOutbox() }
+    .task(id: session.account?.ownerId) {
+      await library.restoreStateOutbox()
+      await library.textTranslations.restore()
+    }
     .onChange(of: session.account?.ownerId) { _, _ in
       library.reset()
+      Task { await library.textTranslations.restore() }
       #if os(macOS)
         Task { await library.translationQueue.restore() }
       #endif
@@ -197,6 +201,7 @@ struct WelcomeScreen: View {
               .keyboardShortcut("o")
           }
           Button("Sync", systemImage: "arrow.triangle.2.circlepath", action: library.synchronize)
+          if library.canManage { TextTranslationQueueButton(queue: library.textTranslations) }
         }
         if showsCollectionFilters {
           ToolbarItem(placement: .secondaryAction) {
@@ -221,7 +226,7 @@ struct WelcomeScreen: View {
           Text(page.title)
           if LibraryPage.organizationPages.contains(page) {
             Spacer()
-            OrganizationSidebarStatus(page: page, fileQueue: library.fileQueue, translationQueue: library.translationQueue)
+            OrganizationSidebarStatus(page: page, fileQueue: library.fileQueue, translationQueue: library.translationQueue, textQueue: library.textTranslations)
           }
           if page == .downloads && library.activeDownloadCount > 0 {
             Spacer()

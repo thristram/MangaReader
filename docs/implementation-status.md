@@ -15,7 +15,7 @@ Updated: 2026-10-14. This is a working native/server foundation, **not a complet
 | Mac library | Native sidebar/unified toolbar, shared adaptive cover grids, search/sort/unread/tag filters, simple chapter detail, horizontal author rows, series/tag detail, history/favorites/stars/saved pages |
 | Mac import | Whole-page drag/drop/select, recursive/natural-sorted images, PDF/MP4/WebM candidates, sequential candidate processing, author/comic/series creation, description/source IDs and tag add/create |
 | File commit | Explicit primary Add & Move, same-volume rename only, root/traversal/symlink/collision checks, prepared recovery payload before movement and commit phases; add-only leaves originals untouched |
-| Mac editing | Revision-aware original/localized title/description/tags/NSFW edit sheets, searchable removable tag chips and nested create sheets; local Ollama text translation to preferred locale immediately saved, no extra popup |
+| Mac editing | Revision-aware original/localized title/description/tags/NSFW edit sheets, searchable removable tag chips and nested create sheets; resumable chunked local Ollama text translation to preferred locale with progress, no confirmation popup |
 | Mac reading | SwiftUI reader, height-filling native image/zoom, PDFKit, AVKit, canonical media-language fallback, thumbnails/overview/adaptive description, page marks and active-time progress; local/Finder-mounted SMB root bookmarks |
 | iPhone UI | UIKit scenes hosting SwiftUI, large-title NavigationStack/search, floating native TabView/minimization, continue-reading accessory, grids/browse filters, reading/connection settings; no metadata/source-file management |
 | iPhone SMB/offline | Dynamic AMSMB2 encrypted share connection, per-owner/root Keychain NAS config, private foreground sequential chapter staging, completed manifests, work/series/author group downloads |
@@ -79,3 +79,14 @@ compare manifests, skip unchanged UI/cache work, fetch changed records and send 
 metadata PATCHes. Query/index, batching, progress durability and backoff behavior
 are specified in [the API extension](api-contract.md#selective-sync-and-small-mutations--2026-11-01).
 Deployment rollout and Vercel quota recovery are separate operational steps.
+
+
+## Long novel descriptions and text jobs (2026-11-02)
+
+Server description limits now support bounded novel-length original/localized text.
+The shared reader caches display segmentation off the UI actor and lays out lazily;
+collections show excerpts. Local text jobs use chapter/paragraph/sentence chunks,
+plain model output, global model-independent context/output settings, disk resume
+and revision/source/translation guards. See [setup and recovery](apple/long-text-translation-2026-11-02.md).
+This is app-runtime work, not a deployed server worker; live model quality and
+physical-device long-novel performance remain separate acceptance checks.

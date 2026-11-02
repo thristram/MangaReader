@@ -373,9 +373,7 @@ struct EntityCollectionScreen: View {
           }.controlSize(.regular)
           if !entity.description(in: AppConfiguration.preferredLanguage).isEmpty {
             HStack(alignment: .top) {
-              Text(entity.description(in: AppConfiguration.preferredLanguage)).foregroundStyle(
-                .secondary
-              ).textSelection(.enabled)
+              CollectionDescription(entity: entity)
               if library.canManage && [.work, .series].contains(entity.kind) {
                 TranslateButton(entity: entity, field: "description")
               }

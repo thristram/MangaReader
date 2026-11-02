@@ -77,3 +77,11 @@ Start with [docs index](docs/README.md), [requirements](docs/requirements.md), [
 ### Optional manga image translation (Mac)
 
 Run manga-image-translator separately, then open **Settings → Manga Image Translation** to set/test its API base URL and defaults. **Edit Chapter → Translate Manga…** queues page translation and automatic archive organization. Track jobs/previews under **Pending Organization → Translation Queue**. [Setup, options and recovery](docs/apple/manga-image-translation-2026-10-18.md) explain the direct image-service API, partial-language fallback and retry behavior; no Vercel/MongoDB migration is needed.
+
+### Novel descriptions and text translation
+
+Descriptions support long novel source text; see [save limits and cached reading](docs/apple/long-text-translation-2026-11-02.md).
+Settings → Ollama Translation configures the model, prompt and global chunk/context/output limits
+(defaults 1,500 characters / 16,384 context / 4,096 output tokens). Title/description
+Translate queues a resumable job with per-chunk progress and plain model output.
+Deploy the updated server to raise the previous description limit; no new env or Mongo migration is required.

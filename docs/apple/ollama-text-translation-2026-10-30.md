@@ -1,5 +1,10 @@
 # Ollama title and description translation
 
+**Historical 2026-10-30 behavior.** The structured-output contract below is
+superseded by [long-text async translation (2026-11-02)](long-text-translation-2026-11-02.md).
+Current clients use plain output, bounded chunks and a durable progress queue.
+The original diagnostics remain as a dated record.
+
 Mac title/description translation calls the configured Ollama host directly using
 `POST /api/chat`, with the exact selected model name, `stream: false` and
 `format: "json"`. Text is stored in the preferred language's metadata localization;

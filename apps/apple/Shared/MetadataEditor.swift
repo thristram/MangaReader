@@ -6,51 +6,41 @@ struct TranslateButton: View {
   let field: String
   @EnvironmentObject private var library: LibraryUIModel
   @EnvironmentObject private var session: AppSession
-  @State private var translating = false
+  var body: some View { QueuedTranslateButton(entity: entity, field: field, queue: library.textTranslations) }
+}
+private struct QueuedTranslateButton: View {
+  let entity: LibraryEntity
+  let field: String
+  @ObservedObject var queue: TextTranslationQueue
+  @EnvironmentObject private var library: LibraryUIModel
+  @State private var preparing = false
+  @State private var showingJobs = false
   var body: some View {
+    let active = queue.active(entity: entity.id, field: field, language: AppConfiguration.preferredLanguage)
     Button {
-      translating = true
-      let language = AppConfiguration.preferredLanguage
-      let owner = session.account?.ownerId
+      if active != nil { showingJobs = true; return }
+      preparing = true
       Task {
-        defer { translating = false }
+        defer { preparing = false }
         do {
-          guard owner == session.account?.ownerId else { return }
-          let text = try await OllamaTranslator.translate(
-            title: field == "title" ? entity.title : "",
-            description: field == "description" ? entity.description : "", language: language)
-          guard owner == session.account?.ownerId, let current = library.entity(entity.id) else {
-            return
-          }
-          guard
-            field == "title"
-              ? current.title == entity.title : current.description == entity.description
-          else { throw LoginError.server("The source changed during translation. Try again.") }
-          var input = current.input
-          var translated = input.localizations[language] ?? LocalizedText()
-          if field == "title" {
-            translated.title = text.title
-          } else {
-            translated.description = text.description
-          }
-          input.localizations[language] = translated
-          try await session.update(current, input: input)
+          try await queue.enqueue(entity: entity, title: library.title(entity), field: field,
+            source: field == "title" ? entity.title : entity.description,
+            language: AppConfiguration.preferredLanguage)
         } catch { library.show(error) }
       }
     } label: {
-      if translating {
-        ProgressView().controlSize(.small)
-      } else {
-        Image(systemName: "character.bubble")
-      }
+      if preparing { ProgressView().controlSize(.small) }
+      else if let active {
+        HStack(spacing: 4) { ProgressView().controlSize(.small); Text("\(active.finished)/\(active.chunks.count)").font(.caption) }
+      } else { Image(systemName: "character.bubble") }
     }
-    .buttonStyle(.borderless).disabled(translating
-      || (field == "title" ? entity.title : entity.description).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).help(
-      "Translate \(field) to \(AppConfiguration.preferredLanguage)"
-    )
-    .accessibilityLabel("Translate " + field)
+    .buttonStyle(.borderless).disabled(preparing || (field == "title" ? entity.title : entity.description).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    .help("Translate " + field + " to " + AppConfiguration.preferredLanguage)
+    .accessibilityLabel(active == nil ? "Translate " + field : "Translation progress")
+    .sheet(isPresented: $showingJobs) { TextTranslationQueueSheet(queue: queue) }
   }
 }
+
 struct TagTokenPicker: View {
   @Binding var selected: [String]
   @EnvironmentObject private var session: AppSession
@@ -274,6 +264,9 @@ struct MetadataEditor: View {
   @State private var textLanguage: String
   @State private var saving = false
   @State private var translating = false
+  @State private var translationIDs = Set<UUID>()
+  @State private var translationDraftValues: [UUID: LocalizedText] = [:]
+  @State private var translationDraft = UUID()
   @State private var status = ""
   @State private var pageOverview = false
   @State private var creating: EditorRequest?
@@ -347,6 +340,7 @@ struct MetadataEditor: View {
                   translate(field: "description")
                 }.labelStyle(.iconOnly).disabled(translating || input.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
               }
+              TextTranslationProgress(queue: library.textTranslations, entityId: request.entity?.id, draftId: translationDraft)
               Text(
                 "Missing translations use the original text. Translating text keeps the same comic pages."
               ).font(.caption).foregroundStyle(.secondary)
@@ -495,6 +489,7 @@ struct MetadataEditor: View {
       }
     }
     .tint(.pink)
+    .onReceive(library.textTranslations.$jobs) { receiveTranslations($0) }
     .sheet(item: $creating) { nested in
       MetadataEditor(
         request: nested,
@@ -659,6 +654,7 @@ struct MetadataEditor: View {
           }
         } else {
           let created = try await session.create(cleanedInput)
+          library.textTranslations.attachDraft(translationDraft, entity: created)
           onSave?(created)
         }
         dismiss()
@@ -667,39 +663,58 @@ struct MetadataEditor: View {
   }
   private func translate(field: String) {
     translating = true
-    status = "Translating…"
+    status = "Preparing translation…"
     let language = AppConfiguration.preferredLanguage
     let owner = session.account?.ownerId
-    let sourceTitle = input.title
-    let sourceDescription = input.description
+    let source = field == "title" ? input.title : input.description
+    let targetAtStart = input.localizations[language] ?? LocalizedText()
     Task {
       defer { translating = false }
       do {
         guard owner == session.account?.ownerId else { return }
-        let text = try await OllamaTranslator.translate(
-          title: field == "title" ? input.title : "",
-          description: field == "description" ? input.description : "", language: language)
-        guard owner == session.account?.ownerId else { return }
-        guard field == "title" ? input.title == sourceTitle : input.description == sourceDescription
-        else { throw LoginError.server("The source changed during translation. Try again.") }
-        var localized = input.localizations[language] ?? LocalizedText()
-        if field == "title" {
-          localized.title = text.title
-        } else {
-          localized.description = text.description
+        var current = try currentForSave()
+        if let saved = current, (field == "title" ? saved.title : saved.description) != source {
+          // Save the source field only; unrelated editor drafts and media-language
+          // changes still require their normal Save/file-commit workflow.
+          var sourceInput = saved.input
+          if field == "title" { sourceInput.title = source } else { sourceInput.description = source }
+          try await session.update(saved, input: sourceInput)
+          current = session.entities.first { $0.id == saved.id }
+          editingRevision = current?.revision
         }
-        input.localizations[language] = localized
-        textLanguage = language
-        if let current = try currentForSave() {
-          try await session.update(current, input: cleanedInput)
-          editingRevision = session.entities.first { $0.id == current.id }?.revision
-          status = "Translation saved · \(language)"
-        } else {
-          status = "Translation added · Save to create this item"
-        }
+        let canonicalSource = field == "title" ? current?.title ?? source : source
+        if field == "title", input.title == source { input.title = canonicalSource }
+        let id = try await library.textTranslations.enqueue(entity: current, draft: translationDraft,
+          title: input.title, field: field, source: canonicalSource, language: language,
+          draftTranslation: targetAtStart)
+        translationIDs.insert(id)
+        translationDraftValues[id] = targetAtStart
+        status = "Translation queued. You can keep editing or close this window."
+        receiveTranslations(library.textTranslations.jobs)
       } catch { status = error.localizedDescription }
     }
   }
+  private func receiveTranslations(_ jobs: [TextTranslationJob]) {
+    for job in jobs where translationIDs.contains(job.id) && job.status == "completed" {
+      translationIDs.remove(job.id)
+      let initial = translationDraftValues.removeValue(forKey: job.id) ?? LocalizedText()
+      guard (job.field == "title" ? input.title : input.description) == job.source,
+        let output = job.result else { status = "Source changed; translated output is retained in Text Translation Queue."; continue }
+      var localized = input.localizations[job.language] ?? LocalizedText()
+      let previous = job.field == "title" ? localized.title : localized.description
+      let expected = job.field == "title" ? initial.title : initial.description
+      guard previous == expected || previous == output else {
+        status = "Draft translation changed; queued output is retained for review."; continue
+      }
+      if job.field == "title" { localized.title = output } else { localized.description = output }
+      input.localizations[job.language] = localized
+      textLanguage = job.language
+      if let id = request.entity?.id, let current = session.entities.first(where: { $0.id == id }),
+        current.revision == (editingRevision ?? 0) + 1 { editingRevision = current.revision }
+      status = request.entity == nil ? "Translation ready · Save to create this item" : "Translation saved · " + job.language
+    }
+  }
+
 }
 func kindName(_ kind: EntityKind) -> String {
   switch kind {

@@ -1,5 +1,27 @@
 # Data migration and file recovery
 
+
+## Novel descriptions and local text jobs — 2026-11-02
+
+Deploy the new server before installing clients that save novel descriptions:
+original/localized fields now accept 500,000 UTF-16 code units, subject to a
+2.8-MB total metadata limit and 4-MB HTTP body limit. Existing Mongo records,
+collections/indexes, account IDs and text-localization fields do not change.
+No database conversion or new environment variables are required.
+
+Client preferences add global `TranslationChunkCharacters` (1500),
+`TranslationContextTokens` (16384), and `TranslationOutputTokens` (4096). These
+apply to new jobs across all selected Ollama models. The historical built-in JSON
+prompt is recognized; custom prompts remain editable and get plain-text output
+instructions. Completed output no longer needs model-generated JSON.
+
+Keep each account's `text-translations.json` cache to resume queued/failed work;
+it stores private source text, chunk outputs and non-credential model settings.
+It is device-local and not a synced server job queue. Existing snapshots and image
+translation journals remain valid. Older apps ignore the new file; finish jobs
+before downgrade or preserve the file for a later upgrade. Display segmentation
+cache is disposable memory and requires no migration. See [behavior and recovery](apple/long-text-translation-2026-11-02.md).
+
 ## Translation recovery upgrade (2026-10-19)
 
 No MongoDB migration or API change is required. New image-addition organization journals include optional `originalMetadata` in the existing account-local journal JSON. Existing journals decode without that field. Recovery preserves newer descriptive metadata when the baseline proves media and folder-defining fields unchanged; already-committed media can finish without any metadata write. For old translation jobs, Retry or file recovery can infer the baseline from a unique persisted job/cache page plus the exact journaled file moves and verified digests. Additional append-only target pages already committed are retained, provided baseline canonical mappings are unchanged and the pending slot is free. The rebased metadata/baseline is written atomically before its API update; optional `priorMetadata` keeps the initial desired payload for audit and also decodes as absent on older records. Other legacy revision conflicts still need review. Keep cached translated images, job records and journals; do not delete them or re-import the chapter to retry.

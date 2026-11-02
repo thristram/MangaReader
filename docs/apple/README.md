@@ -1,5 +1,10 @@
 # Apple apps — setup and usage
 
+[Novel descriptions and async text translation](long-text-translation-2026-11-02.md)
+documents the raised save limits, cached reader text, global chunk/context settings,
+progress queue and retry/recovery. Configure these in Settings → Ollama Translation;
+text jobs also appear in Pending Organization → Translation Queue.
+
 Mac supports [deleting authors while preserving their works](author-removal-and-import-response-2026-10-14.md). The same note documents the single-form import layout, bounded Comic search and background commit checks.
 
 The iPhone reader now uses Photos-style corner controls and a centered title/page counter. See [reader UI, SMB scrolling crash and native Mac first-drop fixes](photos-reader-and-scroll-crash-2026-10-14.md) for behavior, verification and migration notes.

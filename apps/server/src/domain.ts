@@ -9,10 +9,17 @@ export const kinds = [
 ] as const;
 export type Kind = (typeof kinds)[number];
 const locale = z.string().regex(/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/);
+export const descriptionLimit = 500000;
+const descriptionText = z
+  .string()
+  .max(
+    descriptionLimit,
+    "Description exceeds 500,000 UTF-16 code units. Split this novel into separate chapters.",
+  );
 const localized = z
   .object({
     title: z.string().max(500).optional(),
-    description: z.string().max(30000).optional(),
+    description: descriptionText.optional(),
   })
   .strict();
 const media = z
@@ -49,7 +56,7 @@ export const metadataSchema = z
     kind: z.enum(kinds),
     title: z.string().trim().min(1).max(500),
     originalLanguage: locale.default("und"),
-    description: z.string().max(30000).default(""),
+    description: descriptionText.default(""),
     localizations: z.record(locale, localized).default({}),
     authorId: z.uuid().optional(),
     seriesId: z.uuid().optional(),
@@ -72,6 +79,13 @@ export const metadataSchema = z
   })
   .strict()
   .superRefine((v, c) => {
+    if (Buffer.byteLength(JSON.stringify(v), "utf8") > 2800000)
+      c.addIssue({
+        code: "custom",
+        message:
+          "Chapter metadata exceeds 2.8 MB. Split the novel into separate chapters or remove unused text translations.",
+        path: ["description"],
+      });
     if (v.kind !== "chapter" && v.media.length)
       c.addIssue({
         code: "custom",

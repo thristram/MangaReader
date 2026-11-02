@@ -41,7 +41,7 @@ MangaCore provides Codable Sendable contract models, field-level locale fallback
 Cache JSON is schema v1. New schema versions require migration before decoding; current builds should not silently interpret a future schema as v1. Pending reading-state intentions now use an owner-local durable outbox; offline metadata editing, a local database and fully offline reauthentication remain release work. Inspect [status](../implementation-status.md) for implemented vs pending details, especially bulk reorganization, separate covers, Finder tags, offline writes and physical-device gesture acceptance.
 
 
-Reading order and translation mapping use `MediaVersion.pageAlignment` as canonical-to-source indices. Explicit null or out-of-range entries use the original media; source filenames remain unchanged. Text localizations are independent. Edit sheets preserve their initial revision; text translation saves immediately to the preferred locale and updates the draft revision. Page order updates only media mapping and informs the parent editor. Import supports manual original/translated page matching and stages language folders before metadata commit. A translation import's description is saved in `localizations[media.language].description`; it does not replace original text.
+Reading order and translation mapping use `MediaVersion.pageAlignment` as canonical-to-source indices. Explicit null or out-of-range entries use the original media; source filenames remain unchanged. Text localizations are independent. Edit sheets preserve their initial revision; text translation now queues a resumable job and saves its complete output to the preferred locale; the open editor merges that result when its source/target draft is unchanged. Page order updates only media mapping and informs the parent editor. Import supports manual original/translated page matching and stages language folders before metadata commit. A translation import's description is saved in `localizations[media.language].description`; it does not replace original text.
 
 Import source access is captured before asynchronous work. Finder drops read `NSURL` objects through the native drag pasteboard. `ImportSourceAccess` owns the security scope and captured bookmark; the workspace, background worker and failed-job retry share its lifetime. Source root binding reuses that bookmark rather than minting another during commit. Descendant chapters use the selected ancestor root and relative paths. Normal name parsing uses `ImportName` to extract an ASCII numeric Pixiv prefix; scanner source URLs and filenames remain unchanged.
 
@@ -140,3 +140,14 @@ Reading progress cannot overwrite remotely edited favorite/star flags, and an
 explicit star toggle cannot overwrite a remotely edited favorite.
 The chapter/translation editor uses small JSON PATCHes plus receipts; expand wire
 path directories into the existing media model before storage/reading.
+
+
+### Novel descriptions and text translation — 2026-11-02
+
+[Long-text behavior](long-text-translation-2026-11-02.md) supersedes the prior
+single-request structured-output translation. Read long descriptions with bounded
+background segmentation/cache and lazy selectable blocks, preserving font controls.
+Translate actions queue resumable jobs with chunk progress; default 1,500 source
+characters / 16,384 context / 4,096 output tokens apply across model selections.
+Jobs survive editor closure, save completed chunks locally and publish a complete
+field without overwriting a changed source or manual translation.
