@@ -22,3 +22,12 @@ Build the isolated preview with `python3 scripts/preview-native-ui.py mac`. Quit
 ## Import / All Pages / collection controls (2026-10-31)
 
 The real SwiftUI fixture preview is the current iteration surface for this change: `python3 scripts/preview-native-ui.py mac` (or `phone`). On Mac, inspect compact Edit/All Pages tile actions, open the navigation-based All Pages destination, or choose synthetic images in Import & Identify to see the three segmented modes and aligned textbox column to the right of fixed-width labels. Filters live before Mac toolbar search / top-right iPhone navigation. See [current behavior](../apple/spec.md#import-modes-all-pages-navigation-and-unified-filters). The older screenshots/HTML remain a historical reference; regenerate native captures before using them as current acceptance evidence.
+
+
+## Long novel text and text-translation jobs (2026-11-02)
+
+The native Settings → Ollama Translation form and Text Translation Queue are the
+current iteration surface. Build `python3 scripts/preview-native-ui.py mac --long-description`
+for an isolated long-description reader fixture; the HTML remains historical.
+[Behavior and setup](../apple/long-text-translation-2026-11-02.md) describes the
+chunk settings, progress and resume semantics.

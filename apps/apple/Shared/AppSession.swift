@@ -567,6 +567,15 @@ final class AppSession: NSObject, ObservableObject, ASWebAuthenticationPresentat
       else { states.append(value) }
     } else { states.removeAll { $0.entityId == entity && $0.pageIndex == page } }
   }
+  func reloadEntity(_ id: String) async throws {
+    let owner = account?.ownerId, generation = epoch
+    let value = try await api.entity(id)
+    guard owner == account?.ownerId, generation == epoch else { throw LoginError.invalidToken }
+    if let index = entities.firstIndex(where: { $0.id == id }) {
+      if value.revision >= entities[index].revision { entities[index] = value }
+    } else { entities.append(value) }
+    saveLocalCacheSoon()
+  }
   func signOut() {
     epoch = UUID()
     busy = false

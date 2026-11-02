@@ -108,7 +108,7 @@
             }
           },
           "413": {
-            "description": "Body exceeds 2 MB",
+            "description": "Body exceeds 4 MB",
             "content": {
               "application/json": {
                 "schema": {
@@ -308,7 +308,7 @@
             }
           },
           "413": {
-            "description": "Body exceeds 2 MB",
+            "description": "Body exceeds 4 MB",
             "content": {
               "application/json": {
                 "schema": {
@@ -439,7 +439,7 @@
             }
           },
           "413": {
-            "description": "Body exceeds 2 MB",
+            "description": "Body exceeds 4 MB",
             "content": {
               "application/json": {
                 "schema": {
@@ -581,7 +581,7 @@
             }
           },
           "413": {
-            "description": "Body exceeds 2 MB",
+            "description": "Body exceeds 4 MB",
             "content": {
               "application/json": {
                 "schema": {
@@ -733,7 +733,7 @@
             }
           },
           "413": {
-            "description": "Body exceeds 2 MB",
+            "description": "Body exceeds 4 MB",
             "content": {
               "application/json": {
                 "schema": {
@@ -890,7 +890,7 @@
             }
           },
           "413": {
-            "description": "Body exceeds 2 MB",
+            "description": "Body exceeds 4 MB",
             "content": {
               "application/json": {
                 "schema": {
@@ -1025,7 +1025,7 @@
             }
           },
           "413": {
-            "description": "Body exceeds 2 MB",
+            "description": "Body exceeds 4 MB",
             "content": {
               "application/json": {
                 "schema": {
@@ -1197,7 +1197,7 @@
             }
           },
           "413": {
-            "description": "Body exceeds 2 MB",
+            "description": "Body exceeds 4 MB",
             "content": {
               "application/json": {
                 "schema": {
@@ -1340,7 +1340,7 @@
             }
           },
           "413": {
-            "description": "Body exceeds 2 MB",
+            "description": "Body exceeds 4 MB",
             "content": {
               "application/json": {
                 "schema": {
@@ -1474,7 +1474,7 @@
             }
           },
           "413": {
-            "description": "Body exceeds 2 MB",
+            "description": "Body exceeds 4 MB",
             "content": {
               "application/json": {
                 "schema": {
@@ -1609,7 +1609,7 @@
             }
           },
           "413": {
-            "description": "Body exceeds 2 MB",
+            "description": "Body exceeds 4 MB",
             "content": {
               "application/json": {
                 "schema": {
@@ -1742,7 +1742,7 @@
             }
           },
           "413": {
-            "description": "Body exceeds 2 MB",
+            "description": "Body exceeds 4 MB",
             "content": {
               "application/json": {
                 "schema": {
@@ -1888,7 +1888,7 @@
             }
           },
           "413": {
-            "description": "Body exceeds 2 MB",
+            "description": "Body exceeds 4 MB",
             "content": {
               "application/json": {
                 "schema": {
@@ -1978,7 +1978,7 @@
           "description": {
             "default": "",
             "type": "string",
-            "maxLength": 30000
+            "maxLength": 500000
           },
           "localizations": {
             "default": {},
@@ -1996,7 +1996,7 @@
                 },
                 "description": {
                   "type": "string",
-                  "maxLength": 30000
+                  "maxLength": 500000
                 }
               },
               "additionalProperties": false
@@ -2315,7 +2315,7 @@
           "description": {
             "default": "",
             "type": "string",
-            "maxLength": 30000
+            "maxLength": 500000
           },
           "localizations": {
             "default": {},
@@ -2333,7 +2333,7 @@
                 },
                 "description": {
                   "type": "string",
-                  "maxLength": 30000
+                  "maxLength": 500000
                 }
               },
               "additionalProperties": false
@@ -2575,7 +2575,7 @@
           "description": {
             "default": "",
             "type": "string",
-            "maxLength": 30000
+            "maxLength": 500000
           },
           "localizations": {
             "default": {},
@@ -2593,7 +2593,7 @@
                 },
                 "description": {
                   "type": "string",
-                  "maxLength": 30000
+                  "maxLength": 500000
                 }
               },
               "additionalProperties": false

@@ -22,3 +22,12 @@ larger than 4 KB at level 1; retain no-store and owner-scoped authorization.
 Transaction-backed multi-document management/idempotency remains future work.
 
 Canonical shapes/limits: [OpenAPI](../../packages/api-contract/openapi.json), generated from `src/domain.ts`. API semantics: [contract](../api-contract.md). Migration/operation details: [README](README.md).
+
+
+### Novel metadata limits
+
+Original/localized description limit is 500,000 UTF-16 code units per field.
+Validated metadata is bounded to 2.8 MB UTF-8 JSON so selective-sync records remain
+retrievable; HTTP JSON bodies accept up to 4 MB. Description-limit responses expose
+an actionable message. Existing PATCH/PUT/GET/sync paths and owner/CAS checks apply;
+Ollama inference and text-job state stay on the client. No schema migration is needed.

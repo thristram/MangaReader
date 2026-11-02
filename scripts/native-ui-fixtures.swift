@@ -143,6 +143,10 @@ import PDFKit
   static var rejectedUpdateIds = Set<String>()
   static var heldSnapshot: Data?
   static var validateHierarchy = false
+  static func updateRemotely(_ id: String, input: MetadataInput) throws {
+    guard let i = records.firstIndex(where: { $0.id == id }) else { throw LoginError.server("Missing remote fixture") }
+    records[i] = try record(id, input, revision: records[i].revision + 1)
+  }
   private static func validHierarchy(_ input: MetadataInput) -> Bool {
     if let seriesId = input.seriesId,
       let series = records.first(where: { $0.id == seriesId }),
@@ -213,6 +217,8 @@ import PDFKit
       guard let entity = parts.first, let state = readingStates.first(where: { $0.entityId == entity && $0.pageIndex == page }) else { return (404, Data()) }
       return (200, try JSONEncoder().encode(state))
     }
+    if request.httpMethod == "GET", request.url?.path.hasPrefix("/v1/entities/") == true,
+      let record = records.first(where: { $0.id == id }) { return (200, try encoded(record)) }
     if request.httpMethod == "PUT", id == "states" {
       let input = try JSONDecoder().decode(StateInput.self, from: request.httpBody ?? Data())
       let old = readingStates.first {

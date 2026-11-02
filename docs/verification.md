@@ -1,5 +1,45 @@
 # Verification — 2026-10-13
 
+## Long novel descriptions and async text translation — 2026-11-02
+
+- Server build/typecheck/format passed. **18 tests: 17 passed, one optional Mongo
+  integration test skipped.** New tests save exactly 34,592 Japanese characters
+  through PATCH, retain a localized novel through PUT/selective sync, accept a
+  2.1-MB Japanese two-field update beyond the previous parser cap, and reject
+  per-field/total-metadata overflows with actionable errors and unchanged revision.
+- MangaCore: **83 tests, zero failures, one existing second-volume skip**.
+  Novel chunk tests verify chapter-marker isolation, paragraph/sentence/closing
+  quote boundaries, decimal punctuation, hard source limits, lossless whitespace/
+  Unicode reconstruction and no arbitrary oversized-sentence cut. Display cache
+  tests cover reuse, changed content, account isolation, eviction budget and clear.
+- Final Mac and iPhone Simulator Debug builds passed; generated Apple source/
+  scheme/signing consistency and whitespace checks passed.
+- The **full native Mac regression suite** passed against isolated fixtures,
+  including existing import/file-organization/image-translation/recovery flows.
+  New text-job checks process a 34K+ synthetic novel with an interruption after
+  two chunks, restore from disk, skip completed inference, publish only a complete
+  ordered localized field, preserve source/media, snapshot model/token settings,
+  support retranslation of a draft saved during inference, reject a changed source
+  and newer manual translation, reload only one entity after a compatible 409,
+  and invalidate old callbacks on reset. Oversized input starts no inference.
+  Adapter checks accept plain output, preserve internal line breaks, send no
+  structured-output format/source object, and reject empty/incomplete/output-limit
+  results. No live model or production metadata writes were used.
+- Native Mac isolated preview used a **42,254-character** synthetic description.
+  The first accessibility viewport contained only the initial lazy text blocks;
+  scrolling to the bottom revealed Paragraph 300 and the end marker. Text size
+  changed from 18 to 20 points and remained scrollable. Final context/output
+  fields appeared as editable controls; changing context to 8,192 and restoring
+  16,384 worked. The toolbar opened Text Translation Queue. Only preview-bundle
+  preferences were changed; the preview was closed afterward.
+- Requirements/spec, ADR 0019, API contract/OpenAPI, setup/usage/migration and
+  mock-preview instructions were updated. No new env, database transformation,
+  media movement or OAuth changes are needed. Deploy the updated server before
+  clients save novels; these changes have not been deployed by this verification.
+  Live model quality, exact model tokenization, physical-iPhone long-novel
+  performance and guaranteed OS-background execution are not claimed by these
+  synthetic/build checks.
+
 This records checks actually performed for the first development milestone. It does not claim a completed P0 release or a live production deployment.
 
 ## iPhone inline description panel — 2026-10-30

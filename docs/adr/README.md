@@ -24,3 +24,4 @@ See each ADR for its acceptance date. An ADR can accept the target design while 
 - [0017: Same-volume organization without media-byte transfers](0017-same-volume-organization.md)
 
 - [0018: Demand-driven sync and small mutations](0018-demand-driven-sync-and-small-mutations.md)
+- [0019: Long descriptions, lazy text and local translation jobs](0019-long-descriptions-and-text-jobs.md)

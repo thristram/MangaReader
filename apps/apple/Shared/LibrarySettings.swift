@@ -31,6 +31,9 @@ struct LibrarySettingsScreen: View {
   @AppStorage("OllamaURL") private var host = "http://localhost:11434"
   @AppStorage("OllamaModel") private var model = ""
   @AppStorage("OllamaPrompt") private var prompt = OllamaTranslator.defaultPrompt
+  @AppStorage("TranslationChunkCharacters") private var chunkCharacters = 1500
+  @AppStorage("TranslationContextTokens") private var contextTokens = 16384
+  @AppStorage("TranslationOutputTokens") private var outputTokens = 4096
   @AppStorage("FinderFavoriteColor") private var favoriteColor = 6
   @AppStorage("FinderStarColor") private var starColor = 5
   @State private var deletingDestination: LibraryEntity?
@@ -58,7 +61,7 @@ struct LibrarySettingsScreen: View {
         }
         #if os(iOS)
           Section("Settings") {
-            ForEach([LibraryPage.reading, .connections, .sync, .downloads]) { page in
+            ForEach([LibraryPage.reading, .translation, .connections, .sync, .downloads]) { page in
               NavigationLink(value: LibraryRoute.page(page)) {
                 Label(page.title, systemImage: page.symbol)
               }
@@ -90,6 +93,9 @@ struct LibrarySettingsScreen: View {
           Text("Image translation is managed on your Mac.")
         #endif
       case .translation:
+        Section("Text Translation Queue") {
+          TextTranslationQueueButton(queue: library.textTranslations)
+        }
         Section("Local Ollama") {
           TextField("Service URL", text: $host).fullFieldFocus()
           TextField("Model", text: $model).fullFieldFocus()
@@ -116,6 +122,25 @@ struct LibrarySettingsScreen: View {
           Text(
             "Translate buttons use your preferred manga language and save text separately from media."
           ).font(.caption).foregroundStyle(.secondary)
+        }
+        Section("Long Text · All Models") {
+          Stepper("Maximum chunk characters: \(chunkCharacters)", value: $chunkCharacters, in: 100...10000, step: 100)
+          HStack {
+            Text("Context tokens (num_ctx)")
+            Spacer()
+            TextField("", value: $contextTokens, format: .number).labelsHidden()
+              .textFieldStyle(.roundedBorder).frame(width: 120).fullFieldFocus()
+              .accessibilityLabel("Context tokens")
+          }
+          HStack {
+            Text("Output tokens (num_predict)")
+            Spacer()
+            TextField("", value: $outputTokens, format: .number).labelsHidden()
+              .textFieldStyle(.roundedBorder).frame(width: 120).fullFieldFocus()
+              .accessibilityLabel("Output tokens")
+          }
+          Text("Defaults: 1,500 characters, 16,384 context tokens, 4,096 output tokens. Split at [chapter:...] first, then paragraphs and complete sentences. An oversized sentence or exhausted token budget stops with an error instead of truncating. New jobs use these settings for every model; Retry retains cached chunks and original settings. Restart with current settings retranslates the source.")
+            .font(.caption).foregroundStyle(.secondary)
         }
       case .connections, .storage:
         Section("Media Storage") {

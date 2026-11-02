@@ -44,7 +44,7 @@ export function createApp(
   app.use(compression({ threshold: 4096, level: 1 }));
   app.use(
     express.json({
-      limit: "2mb",
+      limit: "4mb",
       type: ["application/json", "application/json-patch+json"],
     }),
   );
@@ -707,7 +707,9 @@ export function createApp(
         return res.status(400).json({
           error: {
             code: "validation_error",
-            message: "Invalid request",
+            message:
+              err.issues.find((issue) => issue.path.includes("description"))
+                ?.message ?? "Invalid request",
             details: err.issues,
           },
         });
@@ -730,7 +732,11 @@ export function createApp(
               : tooLarge
                 ? "payload_too_large"
                 : "internal_error"),
-          message: p?.message ?? "Request failed",
+          message:
+            p?.message ??
+            (tooLarge
+              ? "Request body exceeds 4 MB. Split the novel into separate chapters."
+              : "Request failed"),
         },
       });
     },

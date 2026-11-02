@@ -47,7 +47,7 @@ For entity/state reads, `includeNSFW=true` explicitly reveals NSFW. Snapshot alw
 
 PUT is a complete replacement of editable metadata; omitted fields take request-schema defaults, so send all values you want to preserve. Client `LibraryEntity.input` strips response-only fields. References (author/series/work/tag/root) must be live and owned by the same account. Chapters require an author. Work and chapter author relationships must be consistent; multi-document reference changes still require transaction work before release.
 
-Body limit: 2 MB. Title ≤500 chars, description ≤30,000 chars, ≤100 tags, ≤50 source links, ≤30 media variants, ≤10,000 paths per variant. No arbitrary server execution/file paths are accepted.
+Body limit: 4 MB. Title ≤500 UTF-16 code units; each original/localized description ≤500,000 UTF-16 code units. Validated metadata must fit 2.8 MB of UTF-8 JSON so a single record remains inside the 3-MB sync response budget. Other limits: ≤100 tags, ≤50 source links, ≤30 media variants, ≤10,000 paths per variant. No arbitrary server execution/file paths are accepted.
 
 A single metadata write is atomic; an import's multiple create/move/update steps are **not** an atomic API transaction in this milestone. Durable mutation-id idempotency and file-plan endpoints are pending. No advertised `/jobs`, `/files`, media download or Ollama proxy endpoint exists yet.
 
@@ -109,7 +109,31 @@ Mac whole-media removal updates the chapter's existing `media` array; removing t
 
 ### Optional Ollama text translation service
 
-Apple clients call the configured native Ollama service directly: `GET /api/tags` for installed model names and `POST /api/chat` with `model`, `stream: false`, `format: "json"`, and system/user messages. The custom system prompt is retained with an appended JSON output requirement; the model response's `message.content` must decode as localized `title`/`description`. Entirely blank source text is rejected before HTTP. HTTP/JSON `error` details stop the operation before metadata updates, including explicit missing-model 404 errors. No automatic download, model substitution or inference retry occurs. Text is stored through the existing account/revision-checked entity update, independently of media translations. Service URL/model/prompt remain device-local and no thristram-auth token is sent to Ollama. See [setup and diagnostics](apple/ollama-text-translation-2026-10-30.md).
+Apple clients call the configured native Ollama service directly: `GET /api/tags`
+for installed model names and `POST /api/chat` with `model`, `stream: false`,
+`options.num_ctx`, `options.num_predict`, and system/user messages. No `format`
+constraint or source JSON object is sent: the user message is one source chunk,
+and the response's `message.content` is plain translated text. The HTTP envelope
+is still the native Ollama JSON API. The custom system prompt is retained with
+plain-text output/target-language instructions. No auth token is sent to Ollama.
+
+Title/description clicks enqueue owner-local asynchronous jobs. Default limits
+are 1,500 source characters, 16,384 context tokens and 4,096 output tokens, shared
+across all model selections and snapshotted per job. `[chapter:...]` markers are
+hard boundaries, then whole paragraphs and complete sentences. An individually
+oversized sentence fails explicitly; no arbitrary mid-sentence cut is made.
+Conservative UTF-8 prompt budgeting and provider output-limit/incomplete-result
+errors prevent silent truncation. Character counts do not establish an exact
+model token count. No accumulated chat history is sent.
+
+Cache each finished chunk locally; retry skips it, and publish only the complete
+ordered result to the target metadata localization. Original text/media remain
+unchanged. On revision conflict, fetch one entity, recheck source/translation
+intent and merge only the translated field. A changed source or newer manual
+translation is retained instead of overwritten. No automatic inference retry,
+model substitution or model installation occurs. See
+[long-text behavior](apple/long-text-translation-2026-11-02.md). Existing public
+metadata endpoints carry the result; the server never runs the Ollama job.
 
 ### Optional Mac image translation service
 

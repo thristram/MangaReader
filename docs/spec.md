@@ -98,3 +98,12 @@ The Mac talks directly to a separately deployed manga-image-translator service, 
 ## Organization update — 2026-10-22
 
 Metadata-only chapter reassignment inherits the target comic's author/Series and preserves file references. The common Mac organization executor skips unchanged references, batches shared-source checks, and uses persisted identities for exclusive same-volume links/renames. Shared/cross-volume files retain verified copies. Journaled rename can precede metadata; interrupted work resumes from its recorded destination. See [ADR 0017](adr/0017-same-volume-organization.md). No service contract or database schema changes.
+
+
+## Novel descriptions and text jobs — 2026-11-02
+
+Descriptions support bounded novel-length original/localized text. Readers cache
+verbatim display blocks off the UI actor and lay out lazily. Text translation
+uses account-local async jobs, chapter/paragraph/sentence chunking, global model
+context/output settings and plain-text output; checkpoint chunks and publish only
+the complete field through CAS. See [ADR 0019](adr/0019-long-descriptions-and-text-jobs.md).

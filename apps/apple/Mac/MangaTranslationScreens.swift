@@ -180,6 +180,10 @@ struct MangaTranslationQueueScreen: View {
   var body: some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 20) {
+        Text("Text Translations").font(.title2.bold())
+        TextTranslationJobsView(queue: library.textTranslations)
+        Divider()
+        Text("Image Translations").font(.title2.bold())
         if groups.isEmpty {
           ContentUnavailableView("No translation jobs", systemImage: "character.bubble",
             description: Text("Choose Translate Manga in Edit Chapter to translate image or PDF pages."))
@@ -304,6 +308,7 @@ struct OrganizationSidebarStatus: View {
   let page: LibraryPage
   @ObservedObject var fileQueue: ImportFileQueue
   @ObservedObject var translationQueue: MangaTranslationQueue
+  @ObservedObject var textQueue: TextTranslationQueue
   @EnvironmentObject private var library: LibraryUIModel
   @EnvironmentObject private var session: AppSession
   var body: some View {
@@ -318,9 +323,9 @@ struct OrganizationSidebarStatus: View {
           Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).accessibilityLabel("File tasks failed")
         }
       } else if page == .translationQueue {
-        if translationQueue.pendingCount > 0 {
+        if translationQueue.pendingCount > 0 || textQueue.activeCount > 0 {
           ProgressView().controlSize(.mini).accessibilityLabel("Translations pending")
-        } else if translationQueue.hasErrors {
+        } else if translationQueue.hasErrors || textQueue.jobs.contains(where: { $0.status == "failed" }) {
           Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange).accessibilityLabel("Translations failed")
         }
       }

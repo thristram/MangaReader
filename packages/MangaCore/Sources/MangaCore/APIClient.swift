@@ -58,6 +58,9 @@ public actor APIClient {
   public func records(entities: [String], states: [String]) async throws -> SyncSnapshot {
     try await request("v1/sync/records", method: "POST", body: JSONEncoder().encode(["entities": entities, "states": states]))
   }
+  public func entity(_ id: String) async throws -> LibraryEntity {
+    try await request("v1/entities/" + id, query: [.init(name: "includeNSFW", value: "true")])
+  }
   public func personalState(entity: String, page: Int?) async throws -> PersonalState? {
     do { return try await request("v1/states/" + entity + ":" + (page.map(String.init) ?? "entity")) }
     catch let error as APIError where error.status == 404 {
